@@ -282,16 +282,8 @@ export interface GatewayHealthStatus {
   gatewayConfigured: boolean;
   webhookConfigured: boolean;
   fullyConfigured: boolean;
-  apiUrl: string;
-  missing: string[];
+  missingCount: number;
 }
-
-const DEFAULT_MISSING_SINGPAY_VARS = [
-  'SINGPAY_CLIENT_ID',
-  'SINGPAY_CLIENT_SECRET',
-  'SINGPAY_WALLET_ID',
-  'SINGPAY_WEBHOOK_URL',
-];
 
 export async function fetchMobileMoneyGatewayHealth(): Promise<GatewayHealthStatus> {
   try {
@@ -302,8 +294,7 @@ export async function fetchMobileMoneyGatewayHealth(): Promise<GatewayHealthStat
         gatewayConfigured: false,
         webhookConfigured: false,
         fullyConfigured: false,
-        apiUrl: 'https://gateway.singpay.ga/v1',
-        missing: DEFAULT_MISSING_SINGPAY_VARS,
+        missingCount: 5,
       };
     }
     const data = (await resp.json()) as Partial<GatewayHealthStatus>;
@@ -312,8 +303,7 @@ export async function fetchMobileMoneyGatewayHealth(): Promise<GatewayHealthStat
       gatewayConfigured: Boolean(data.gatewayConfigured),
       webhookConfigured: Boolean(data.webhookConfigured),
       fullyConfigured: Boolean(data.fullyConfigured),
-      apiUrl: data.apiUrl || 'https://gateway.singpay.ga/v1',
-      missing: Array.isArray(data.missing) ? data.missing : [],
+      missingCount: typeof data.missingCount === 'number' ? data.missingCount : 0,
     };
   } catch {
     return {
@@ -321,8 +311,7 @@ export async function fetchMobileMoneyGatewayHealth(): Promise<GatewayHealthStat
       gatewayConfigured: false,
       webhookConfigured: false,
       fullyConfigured: false,
-      apiUrl: 'https://gateway.singpay.ga/v1',
-      missing: DEFAULT_MISSING_SINGPAY_VARS,
+      missingCount: 5,
     };
   }
 }

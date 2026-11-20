@@ -75,7 +75,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Commission withdrawal modal via SingPay POST /transfert
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [withdrawOp, setWithdrawOp] = useState<MobileOperator>('Airtel Money');
-  const [withdrawPhone, setWithdrawPhone] = useState('077001122');
+  const [withdrawPhone, setWithdrawPhone] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawErr, setWithdrawErr] = useState<string | null>(null);
   const [withdrawSubmitting, setWithdrawSubmitting] = useState(false);
@@ -845,7 +845,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 flex items-start gap-2 text-xs text-amber-100">
                     <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                     <p className="leading-relaxed">
-                      Passerelle SingPay en attente de configuration ({gatewayHealth.missing.join(', ')}). Aucun solde ne sera débité sans confirmation réelle.
+                      Passerelle SingPay en attente de configuration côté serveur. Aucun solde ne sera débité sans confirmation réelle.
                     </p>
                   </div>
                 )}

@@ -98,7 +98,7 @@ export const OperationsModal: React.FC<OperationsModalProps> = ({
   onInternationalTransfer,
 }) => {
   const [operator, setOperator] = useState<MobileOperator>('Airtel Money');
-  const [phone, setPhone] = useState('077458812');
+  const [phone, setPhone] = useState('');
   const [amountStr, setAmountStr] = useState('25000');
   const [targetCard, setTargetCard] = useState('');
   const [recipientInfo, setRecipientInfo] = useState<CardDirectoryEntry | null>(null);
@@ -640,11 +640,7 @@ export const OperationsModal: React.FC<OperationsModalProps> = ({
                         Passerelle SingPay en attente de configuration
                       </p>
                       <p className="leading-relaxed text-slate-200">
-                        Variables SingPay non renseignées ({gatewayHealth.apiUrl}) :{' '}
-                        <span className="font-mono-tabular text-amber-200">
-                          {gatewayHealth.missing.join(', ')}
-                        </span>
-                        . Toute opération reste au statut <strong>PENDING</strong> sans modification de solde ni commission de 2 % jusqu’à confirmation réelle (SUCCESS).
+                        Les variables serveur de la passerelle SingPay ne sont pas encore toutes renseignées. Toute opération reste au statut <strong>PENDING</strong> sans modification de solde ni commission de 2 % jusqu’à confirmation réelle (SUCCESS).
                       </p>
                     </div>
                   </div>

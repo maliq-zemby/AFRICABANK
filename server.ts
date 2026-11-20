@@ -43,15 +43,15 @@ interface GatewayConfigStatus {
   gatewayConfigured: boolean;
   webhookConfigured: boolean;
   fullyConfigured: boolean;
-  apiUrl: string;
-  missing: string[];
+  missingCount: number;
 }
 
 const SESSION_TTL_MS = 3 * 60 * 1000;
 const PORT = Number(process.env.PORT) || 3000;
-const DEFAULT_SINGPAY_API_URL = 'https://gateway.singpay.ga/v1';
 
 function loadFirebaseApiKey(): string {
+  const envKey = (process.env.FIREBASE_API_KEY || '').trim();
+  if (envKey) return envKey;
   try {
     const configPath = path.resolve(import.meta.dirname, 'firebase-applet-config.json');
     const raw = fs.readFileSync(configPath, 'utf8');
@@ -66,9 +66,7 @@ const FIREBASE_API_KEY = loadFirebaseApiKey();
 const SINGPAY_CLIENT_ID = (process.env.SINGPAY_CLIENT_ID || '').trim();
 const SINGPAY_CLIENT_SECRET = (process.env.SINGPAY_CLIENT_SECRET || '').trim();
 const SINGPAY_WALLET_ID = (process.env.SINGPAY_WALLET_ID || '').trim();
-const SINGPAY_API_URL = (process.env.SINGPAY_API_URL || DEFAULT_SINGPAY_API_URL)
-  .trim()
-  .replace(/\/+$/, '');
+const SINGPAY_API_URL = (process.env.SINGPAY_API_URL || '').trim().replace(/\/+$/, '');
 const SINGPAY_WEBHOOK_URL = (process.env.SINGPAY_WEBHOOK_URL || '').trim();
 const APP_URL = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
 
@@ -79,12 +77,14 @@ function getEffectiveWebhookUrl(): string | undefined {
 }
 
 function getGatewayConfigStatus(): GatewayConfigStatus {
-  const missing: string[] = [];
-  if (!SINGPAY_CLIENT_ID) missing.push('SINGPAY_CLIENT_ID');
-  if (!SINGPAY_CLIENT_SECRET) missing.push('SINGPAY_CLIENT_SECRET');
-  if (!SINGPAY_WALLET_ID) missing.push('SINGPAY_WALLET_ID');
-  if (!SINGPAY_API_URL) missing.push('SINGPAY_API_URL');
-  if (!SINGPAY_WEBHOOK_URL) missing.push('SINGPAY_WEBHOOK_URL');
+  const missingFlags = [
+    Boolean(SINGPAY_CLIENT_ID),
+    Boolean(SINGPAY_CLIENT_SECRET),
+    Boolean(SINGPAY_WALLET_ID),
+    Boolean(SINGPAY_API_URL),
+    Boolean(SINGPAY_WEBHOOK_URL),
+  ];
+  const missingCount = missingFlags.filter((present) => !present).length;
 
   const gatewayConfigured = Boolean(
     SINGPAY_CLIENT_ID && SINGPAY_CLIENT_SECRET && SINGPAY_WALLET_ID && SINGPAY_API_URL
@@ -95,8 +95,7 @@ function getGatewayConfigStatus(): GatewayConfigStatus {
     gatewayConfigured,
     webhookConfigured,
     fullyConfigured: gatewayConfigured && Boolean(SINGPAY_WEBHOOK_URL),
-    apiUrl: SINGPAY_API_URL || DEFAULT_SINGPAY_API_URL,
-    missing,
+    missingCount,
   };
 }
 
@@ -766,12 +765,10 @@ async function startServer(): Promise<void> {
   app.listen(PORT, '0.0.0.0', () => {
     const status = getGatewayConfigStatus();
     if (status.fullyConfigured) {
-      console.log(
-        `AFRICABANK server listening on http://0.0.0.0:${PORT} (SingPay prêt : ${status.apiUrl})`
-      );
+      console.log(`AFRICABANK server listening on http://0.0.0.0:${PORT} (passerelle SingPay active)`);
     } else {
       console.log(
-        `AFRICABANK server listening on http://0.0.0.0:${PORT} (passerelle SingPay en attente de configuration : ${status.missing.join(', ')})`
+        `AFRICABANK server listening on http://0.0.0.0:${PORT} (passerelle SingPay en attente de configuration)`
       );
     }
   });
