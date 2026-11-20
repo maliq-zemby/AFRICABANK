@@ -1,0 +1,299 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil utilisateur OgoouePay avec carte virtuelle, solde FCFA, statistiques de fidelite et statut de moderation.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "firstName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "lastName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "age": { "type": "integer" },
+        "acceptedTerms": { "type": "boolean" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "isBanned": { "type": "boolean" },
+        "banReason": { "type": "string", "maxLength": 500 },
+        "cardNumber": { "type": "string", "minLength": 16, "maxLength": 16, "pattern": "^4532[0-9]{12}$" },
+        "cardExpiry": { "type": "string", "minLength": 5, "maxLength": 5, "pattern": "^(0[1-9]|1[0-2])/[0-9]{2}$" },
+        "cardCvv": { "type": "string", "minLength": 3, "maxLength": 3, "pattern": "^[0-9]{3}$" },
+        "balance": { "type": "number" },
+        "totalDepositsCount": { "type": "integer" },
+        "totalDepositsVolume": { "type": "number" },
+        "totalWithdrawalsVolume": { "type": "number" },
+        "totalTransactionsCount": { "type": "integer" },
+        "totalVolume": { "type": "number" },
+        "loanEligible": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "email",
+        "firstName",
+        "lastName",
+        "fullName",
+        "age",
+        "acceptedTerms",
+        "role",
+        "isBanned",
+        "banReason",
+        "cardNumber",
+        "cardExpiry",
+        "cardCvv",
+        "balance",
+        "totalDepositsCount",
+        "totalDepositsVolume",
+        "totalWithdrawalsVolume",
+        "totalTransactionsCount",
+        "totalVolume",
+        "loanEligible",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CardDirectoryEntry": {
+      "title": "CardDirectoryEntry",
+      "description": "Annuaire public limite des cartes virtuelles sans PII pour verification du beneficiaire lors des transferts carte a carte.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "cardNumber": { "type": "string", "minLength": 16, "maxLength": 16, "pattern": "^4532[0-9]{12}$" },
+        "holderName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "cardNumber", "holderName", "active", "createdAt"]
+    },
+    "MessagingDirectoryEntry": {
+      "title": "MessagingDirectoryEntry",
+      "description": "Annuaire de messagerie sans PII sensible (nom et 4 derniers chiffres) pour demarrer des discussions 1-a-1.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "cardLast4": { "type": "string", "minLength": 4, "maxLength": 4, "pattern": "^[0-9]{4}$" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "cardLast4", "role", "updatedAt"]
+    },
+    "TransactionRecord": {
+      "title": "TransactionRecord",
+      "description": "Enregistrement immuable d'une operation financiere avec calcul de la commission de 2%.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "recipientId": { "type": "string", "maxLength": 128 },
+        "recipientName": { "type": "string", "maxLength": 120 },
+        "type": {
+          "type": "string",
+          "enum": [
+            "deposit",
+            "withdrawal",
+            "transfer_internal",
+            "transfer_international",
+            "online_purchase",
+            "loan_disbursement",
+            "admin_withdrawal"
+          ]
+        },
+        "operator": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "phoneOrAccount": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "country": { "type": "string", "maxLength": 60 },
+        "grossAmount": { "type": "number" },
+        "feeAmount": { "type": "number" },
+        "netAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["completed", "pending", "failed"] },
+        "description": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "recipientId",
+        "recipientName",
+        "type",
+        "operator",
+        "phoneOrAccount",
+        "country",
+        "grossAmount",
+        "feeAmount",
+        "netAmount",
+        "status",
+        "description",
+        "createdAt"
+      ]
+    },
+    "LoanRequest": {
+      "title": "LoanRequest",
+      "description": "Demande de pret soumise par un utilisateur eligible et traitee par l'administrateur.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "amount": { "type": "number" },
+        "durationMonths": { "type": "integer" },
+        "reason": { "type": "string", "minLength": 3, "maxLength": 400 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "adminNote": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "amount",
+        "durationMonths",
+        "reason",
+        "status",
+        "adminNote",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Notification privee isolee par userId (confirmations, receptions, eligibilite pret, messages admin).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "category": { "type": "string", "enum": ["transaction", "loan", "admin", "broadcast", "security"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "message", "category", "read", "createdAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Fil de messagerie privee 1-a-1 strictement cloisonne entre 2 participants ou Administration.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "participantIds": { "type": "array" },
+        "participantLabels": { "type": "array" },
+        "isAdminSupport": { "type": "boolean" },
+        "lastMessage": { "type": "string", "maxLength": 300 },
+        "lastSenderId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "participantIds",
+        "participantLabels",
+        "isAdminSupport",
+        "lastMessage",
+        "lastSenderId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Message individuel dans une conversation privee.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "senderId", "senderName", "text", "createdAt"]
+    },
+    "CommentReview": {
+      "title": "CommentReview",
+      "description": "Avis et commentaire public sur l'application OgoouePay, moderable par l'administrateur.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "rating": { "type": "integer" },
+        "content": { "type": "string", "minLength": 3, "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "authorName", "rating", "content", "createdAt"]
+    },
+    "AdminWallet": {
+      "title": "AdminWallet",
+      "description": "Portefeuille administrateur accumulant les commissions de 2% en temps reel.",
+      "type": "object",
+      "properties": {
+        "commissionBalance": { "type": "number" },
+        "totalCommissionsEarned": { "type": "number" },
+        "totalWithdrawnByAdmin": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["commissionBalance", "totalCommissionsEarned", "totalWithdrawnByAdmin", "updatedAt"]
+    },
+    "LoanConfig": {
+      "title": "LoanConfig",
+      "description": "Parametres configurables par l'administrateur pour l'eligibilite automatique aux prets.",
+      "type": "object",
+      "properties": {
+        "minTransactionsCount": { "type": "integer" },
+        "minCumulativeVolume": { "type": "number" },
+        "maxLoanAmount": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["minTransactionsCount", "minCumulativeVolume", "maxLoanAmount", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Profils complets des utilisateurs (PII protegee par owner/admin)."
+    },
+    "/card_directory/{cardNumber}": {
+      "schema": { "$ref": "#/entities/CardDirectoryEntry" },
+      "description": "Lookup par numero de carte a 16 chiffres sans exposition de PII."
+    },
+    "/messaging_directory/{userId}": {
+      "schema": { "$ref": "#/entities/MessagingDirectoryEntry" },
+      "description": "Annuaire leger pour la messagerie privee."
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/TransactionRecord" },
+      "description": "Journal des transactions et commissions 2%."
+    },
+    "/loans/{loanId}": {
+      "schema": { "$ref": "#/entities/LoanRequest" },
+      "description": "Demandes de prets."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "Notifications privees par utilisateur."
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Conversations privees 1-a-1."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages d'une conversation privee."
+    },
+    "/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/CommentReview" },
+      "description": "Avis publics sur l'application."
+    },
+    "/admin_stats/{statId}": {
+      "schema": { "$ref": "#/entities/AdminWallet" },
+      "description": "Portefeuille des commissions de l'administrateur (admin_stats/wallet)."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/LoanConfig" },
+      "description": "Configuration globale de la plateforme (settings/loan_config)."
+    }
+  }
+}

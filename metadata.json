@@ -1,0 +1,6 @@
+{
+  "name": "OgoouéPay",
+  "description": "Application PWA FinTech de gestion de cartes bancaires virtuelles, Mobile Money (Airtel & Moov), transferts et micro-prêts au Gabon en FCFA (XAF).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

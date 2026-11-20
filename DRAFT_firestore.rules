@@ -1,0 +1,509 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default Deny All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== PRIMITIVES & HELPERS ====================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCardId(card) {
+      return card is string && card.size() == 16 && card.matches('^4532[0-9]{12}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && isEmailVerified() && (
+        request.auth.token.email == 'maliqzemby8@gmail.com' ||
+        request.auth.token.email == 'maliqzemby@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isNotBanned(uid) {
+      return !exists(/databases/$(database)/documents/users/$(uid)) ||
+        get(/databases/$(database)/documents/users/$(uid)).data.isBanned == false;
+    }
+
+    // ==================== ENTITY VALIDATION BLUEPRINTS ====================
+    function isValidUser(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'email', 'firstName', 'lastName', 'fullName', 'age', 'acceptedTerms',
+          'role', 'isBanned', 'banReason', 'cardNumber', 'cardExpiry', 'cardCvv',
+          'balance', 'totalDepositsCount', 'totalDepositsVolume', 'totalWithdrawalsVolume',
+          'totalTransactionsCount', 'totalVolume', 'loanEligible', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'firstName', 'lastName', 'fullName', 'age', 'acceptedTerms',
+          'role', 'isBanned', 'banReason', 'cardNumber', 'cardExpiry', 'cardCvv',
+          'balance', 'totalDepositsCount', 'totalDepositsVolume', 'totalWithdrawalsVolume',
+          'totalTransactionsCount', 'totalVolume', 'loanEligible', 'createdAt', 'updatedAt'
+        ])
+        && data.uid == userId
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 60
+        && data.lastName is string && data.lastName.size() >= 1 && data.lastName.size() <= 60
+        && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120
+        && data.age is int && data.age >= 18 && data.age <= 120
+        && data.acceptedTerms == true
+        && data.role in ['user', 'admin']
+        && data.isBanned is bool
+        && data.banReason is string && data.banReason.size() <= 500
+        && isValidCardId(data.cardNumber)
+        && data.cardExpiry is string && data.cardExpiry.size() == 5 && data.cardExpiry.matches('^(0[1-9]|1[0-2])/[0-9]{2}$')
+        && data.cardCvv is string && data.cardCvv.size() == 3 && data.cardCvv.matches('^[0-9]{3}$')
+        && data.balance is number && data.balance >= 0 && data.balance <= 500000000
+        && data.totalDepositsCount is int && data.totalDepositsCount >= 0
+        && data.totalDepositsVolume is number && data.totalDepositsVolume >= 0
+        && data.totalWithdrawalsVolume is number && data.totalWithdrawalsVolume >= 0
+        && data.totalTransactionsCount is int && data.totalTransactionsCount >= 0
+        && data.totalVolume is number && data.totalVolume >= 0
+        && data.loanEligible is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCardDirectory(data, cardId) {
+      return data.keys().hasAll(['uid', 'cardNumber', 'holderName', 'active', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'cardNumber', 'holderName', 'active', 'createdAt'])
+        && isValidId(data.uid)
+        && data.cardNumber == cardId
+        && isValidCardId(data.cardNumber)
+        && data.holderName is string && data.holderName.size() >= 1 && data.holderName.size() <= 120
+        && data.active is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidMessagingDirectory(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'cardLast4', 'role', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'cardLast4', 'role', 'updatedAt'])
+        && data.uid == userId
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && data.cardLast4 is string && data.cardLast4.size() == 4 && data.cardLast4.matches('^[0-9]{4}$')
+        && data.role in ['user', 'admin']
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data, txId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'recipientId', 'recipientName', 'type', 'operator',
+          'phoneOrAccount', 'country', 'grossAmount', 'feeAmount', 'netAmount', 'status',
+          'description', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'userName', 'recipientId', 'recipientName', 'type', 'operator',
+          'phoneOrAccount', 'country', 'grossAmount', 'feeAmount', 'netAmount', 'status',
+          'description', 'createdAt'
+        ])
+        && data.id == txId
+        && isValidId(data.userId)
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120
+        && data.recipientId is string && data.recipientId.size() <= 128
+        && data.recipientName is string && data.recipientName.size() <= 120
+        && data.type in [
+          'deposit', 'withdrawal', 'transfer_internal', 'transfer_international',
+          'online_purchase', 'loan_disbursement', 'admin_withdrawal'
+        ]
+        && data.operator is string && data.operator.size() >= 1 && data.operator.size() <= 60
+        && data.phoneOrAccount is string && data.phoneOrAccount.size() >= 1 && data.phoneOrAccount.size() <= 100
+        && data.country is string && data.country.size() <= 60
+        && data.grossAmount is number && data.grossAmount > 0 && data.grossAmount <= 100000000
+        && data.feeAmount is number && data.feeAmount >= 0 && data.feeAmount <= 10000000
+        && data.netAmount is number && data.netAmount >= 0 && data.netAmount <= 100000000
+        && data.status in ['completed', 'pending', 'failed']
+        && data.description is string && data.description.size() >= 1 && data.description.size() <= 240
+        && data.createdAt is timestamp;
+    }
+
+    function isValidLoan(data, loanId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'amount', 'durationMonths', 'reason',
+          'status', 'adminNote', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'userName', 'amount', 'durationMonths', 'reason',
+          'status', 'adminNote', 'createdAt', 'updatedAt'
+        ])
+        && data.id == loanId
+        && isValidId(data.userId)
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120
+        && data.amount is number && data.amount >= 5000 && data.amount <= 50000000
+        && data.durationMonths is int && data.durationMonths >= 1 && data.durationMonths <= 36
+        && data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 400
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.adminNote is string && data.adminNote.size() <= 300
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function isValidNotification(data, notifId) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'message', 'category', 'read', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'title', 'message', 'category', 'read', 'createdAt'])
+        && data.id == notifId
+        && isValidId(data.userId)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 500
+        && data.category in ['transaction', 'loan', 'admin', 'broadcast', 'security']
+        && data.read is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidConversation(data, convId) {
+      return data.keys().hasAll([
+          'id', 'participantIds', 'participantLabels', 'isAdminSupport',
+          'lastMessage', 'lastSenderId', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'participantIds', 'participantLabels', 'isAdminSupport',
+          'lastMessage', 'lastSenderId', 'createdAt', 'updatedAt'
+        ])
+        && data.id == convId
+        && data.participantIds is list && data.participantIds.size() == 2
+        && data.participantIds[0] is string && data.participantIds[0].size() <= 128
+        && data.participantIds[1] is string && data.participantIds[1].size() <= 128
+        && data.participantLabels is list && data.participantLabels.size() == 2
+        && data.participantLabels[0] is string && data.participantLabels[0].size() <= 120
+        && data.participantLabels[1] is string && data.participantLabels[1].size() <= 120
+        && data.isAdminSupport is bool
+        && data.lastMessage is string && data.lastMessage.size() <= 300
+        && data.lastSenderId is string && data.lastSenderId.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function isValidMessage(data, msgId) {
+      return data.keys().hasAll(['id', 'senderId', 'senderName', 'text', 'createdAt'])
+        && data.keys().hasOnly(['id', 'senderId', 'senderName', 'text', 'createdAt'])
+        && data.id == msgId
+        && data.senderId is string && data.senderId.size() >= 1 && data.senderId.size() <= 128
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 120
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 1000
+        && data.createdAt == request.time;
+    }
+
+    function isValidComment(data, commentId) {
+      return data.keys().hasAll(['id', 'userId', 'authorName', 'rating', 'content', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'authorName', 'rating', 'content', 'createdAt'])
+        && data.id == commentId
+        && isValidId(data.userId)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 100
+        && data.rating is int && data.rating >= 1 && data.rating <= 5
+        && data.content is string && data.content.size() >= 3 && data.content.size() <= 500
+        && data.createdAt == request.time;
+    }
+
+    function isValidAdminWallet(data) {
+      return data.keys().hasAll(['commissionBalance', 'totalCommissionsEarned', 'totalWithdrawnByAdmin', 'updatedAt'])
+        && data.keys().hasOnly(['commissionBalance', 'totalCommissionsEarned', 'totalWithdrawnByAdmin', 'updatedAt'])
+        && data.commissionBalance is number && data.commissionBalance >= 0
+        && data.totalCommissionsEarned is number && data.totalCommissionsEarned >= 0
+        && data.totalWithdrawnByAdmin is number && data.totalWithdrawnByAdmin >= 0
+        && data.updatedAt == request.time;
+    }
+
+    function isValidLoanConfig(data) {
+      return data.keys().hasAll(['minTransactionsCount', 'minCumulativeVolume', 'maxLoanAmount', 'updatedAt'])
+        && data.keys().hasOnly(['minTransactionsCount', 'minCumulativeVolume', 'maxLoanAmount', 'updatedAt'])
+        && data.minTransactionsCount is int && data.minTransactionsCount >= 1 && data.minTransactionsCount <= 100
+        && data.minCumulativeVolume is number && data.minCumulativeVolume >= 0 && data.minCumulativeVolume <= 50000000
+        && data.maxLoanAmount is number && data.maxLoanAmount >= 10000 && data.maxLoanAmount <= 50000000
+        && data.updatedAt == request.time;
+    }
+
+    // ==================== COLLECTION MATCH BLOCKS ====================
+
+    // Connection test document
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Admins registry
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow write: if false;
+    }
+
+    // Users (Strict PII isolation)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isValidId(userId)
+        && isEmailVerified()
+        && isOwner(userId)
+        && isValidUser(incoming(), userId)
+        && incoming().isBanned == false
+        && incoming().banReason == ''
+        && incoming().balance == 0
+        && incoming().totalDepositsCount == 0
+        && incoming().totalDepositsVolume == 0
+        && incoming().totalWithdrawalsVolume == 0
+        && incoming().totalTransactionsCount == 0
+        && incoming().totalVolume == 0
+        && incoming().loanEligible == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (incoming().role == 'user' || (incoming().role == 'admin' && isAdmin()));
+
+      allow update: if isValidId(userId)
+        && isEmailVerified()
+        && isValidUser(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Admin moderation & loan disbursement
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'isBanned', 'banReason', 'balance', 'loanEligible', 'role', 'updatedAt'
+          ]))
+          ||
+          // Tier 2a: Owner financial & loyalty stats update (cannot self-unban or change role)
+          (isOwner(userId)
+            && existing().isBanned == false
+            && incoming().isBanned == existing().isBanned
+            && incoming().banReason == existing().banReason
+            && incoming().role == existing().role
+            && incoming().cardNumber == existing().cardNumber
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'balance', 'totalDepositsCount', 'totalDepositsVolume',
+              'totalWithdrawalsVolume', 'totalTransactionsCount', 'totalVolume',
+              'loanEligible', 'updatedAt'
+            ])
+          )
+          ||
+          // Tier 2b: Incoming P2P card-to-card credit from another verified user (strictly increases balance only)
+          (userId != request.auth.uid
+            && isNotBanned(request.auth.uid)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'updatedAt'])
+            && incoming().balance > existing().balance
+            && (incoming().balance - existing().balance) <= 50000000
+          )
+        );
+    }
+
+    // Card Directory (Lookup by 16-digit card number without PII)
+    match /card_directory/{cardId} {
+      allow get: if isValidCardId(cardId) && isSignedIn();
+      allow create: if isValidCardId(cardId)
+        && isEmailVerified()
+        && isValidCardDirectory(incoming(), cardId)
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isValidCardId(cardId) && isAdmin() && isValidCardDirectory(incoming(), cardId);
+    }
+
+    // Messaging Directory (Light display handle + last 4 digits, zero PII)
+    match /messaging_directory/{userId} {
+      allow get: if isValidId(userId) && isSignedIn();
+      allow list: if isSignedIn() && resource.data.uid != '';
+      allow create: if isValidId(userId)
+        && isEmailVerified()
+        && isOwner(userId)
+        && isValidMessagingDirectory(incoming(), userId)
+        && (incoming().role == 'user' || isAdmin())
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isEmailVerified()
+        && (isOwner(userId) || isAdmin())
+        && isValidMessagingDirectory(incoming(), userId)
+        && incoming().updatedAt == request.time;
+    }
+
+    // Transactions
+    match /transactions/{transactionId} {
+      allow get: if isValidId(transactionId) && isSignedIn() && (
+        isAdmin() || resource == null || existing().userId == request.auth.uid || existing().recipientId == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || resource.data.userId == request.auth.uid || resource.data.recipientId == request.auth.uid
+      );
+      allow create: if isValidId(transactionId)
+        && isEmailVerified()
+        && isNotBanned(request.auth.uid)
+        && isValidTransaction(incoming(), transactionId)
+        && incoming().createdAt == request.time
+        && (incoming().userId == request.auth.uid || isAdmin());
+      allow update: if isValidId(transactionId)
+        && isEmailVerified()
+        && isNotBanned(request.auth.uid)
+        && isValidTransaction(incoming(), transactionId)
+        && existing().status == 'pending'
+        && incoming().status in ['completed', 'failed']
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().grossAmount == existing().grossAmount
+        && incoming().feeAmount == existing().feeAmount
+        && incoming().netAmount == existing().netAmount
+        && (isAdmin() || existing().userId == request.auth.uid)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'description']);
+    }
+
+    // Loans
+    match /loans/{loanId} {
+      allow get: if isValidId(loanId) && isSignedIn() && (
+        isAdmin() || resource == null || existing().userId == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || resource.data.userId == request.auth.uid
+      );
+      allow create: if isValidId(loanId)
+        && isEmailVerified()
+        && isNotBanned(request.auth.uid)
+        && isValidLoan(incoming(), loanId)
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().adminNote == ''
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.loanEligible == true;
+
+      allow update: if isValidId(loanId)
+        && isAdmin()
+        && isValidLoan(incoming(), loanId)
+        && existing().status == 'pending'
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'updatedAt']);
+    }
+
+    // Notifications (Strictly isolated by userId)
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isSignedIn() && (
+        isAdmin() || resource == null || existing().userId == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || resource.data.userId == request.auth.uid
+      );
+      allow create: if isValidId(notificationId)
+        && isEmailVerified()
+        && isNotBanned(request.auth.uid)
+        && isValidNotification(incoming(), notificationId)
+        && incoming().createdAt == request.time
+        && (
+          isAdmin()
+          || incoming().userId == request.auth.uid
+          || incoming().category == 'transaction'
+        );
+      allow update: if isValidId(notificationId)
+        && isEmailVerified()
+        && isValidNotification(incoming(), notificationId)
+        && incoming().createdAt == existing().createdAt
+        && incoming().userId == existing().userId
+        && (
+          isAdmin()
+          || (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']))
+        );
+    }
+
+    // Conversations & Messages (Master Gate)
+    match /conversations/{conversationId} {
+      allow get: if isValidId(conversationId) && isSignedIn() && (
+        isAdmin() || resource == null || request.auth.uid in existing().participantIds
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || request.auth.uid in resource.data.participantIds
+      );
+      allow create: if isValidId(conversationId)
+        && isEmailVerified()
+        && isNotBanned(request.auth.uid)
+        && isValidConversation(incoming(), conversationId)
+        && incoming().createdAt == request.time
+        && (isAdmin() || request.auth.uid in incoming().participantIds);
+      allow update: if isValidId(conversationId)
+        && isEmailVerified()
+        && isNotBanned(request.auth.uid)
+        && isValidConversation(incoming(), conversationId)
+        && incoming().createdAt == existing().createdAt
+        && incoming().participantIds == existing().participantIds
+        && (isAdmin() || request.auth.uid in existing().participantIds)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'updatedAt']);
+
+      match /messages/{messageId} {
+        allow get, list: if isValidId(conversationId) && isSignedIn() && (
+          isAdmin()
+          || request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
+        );
+        allow create: if isValidId(conversationId)
+          && isValidId(messageId)
+          && isEmailVerified()
+          && isNotBanned(request.auth.uid)
+          && isValidMessage(incoming(), messageId)
+          && exists(/databases/$(database)/documents/conversations/$(conversationId))
+          && (
+            (request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds && incoming().senderId == request.auth.uid)
+            || (isAdmin() && (incoming().senderId == request.auth.uid || incoming().senderId == 'ADMIN'))
+          );
+      }
+    }
+
+    // Public Comments / Reviews
+    match /comments/{commentId} {
+      allow get: if isValidId(commentId) && isSignedIn();
+      allow list: if isSignedIn() && resource.data.rating >= 1 && resource.data.rating <= 5;
+      allow create: if isValidId(commentId)
+        && isEmailVerified()
+        && isNotBanned(request.auth.uid)
+        && isValidComment(incoming(), commentId)
+        && incoming().userId == request.auth.uid;
+      allow delete: if isValidId(commentId) && (
+        isAdmin() || (isSignedIn() && existing().userId == request.auth.uid)
+      );
+    }
+
+    // Admin Wallet (Commissions)
+    match /admin_stats/{statId} {
+      allow get: if isValidId(statId) && isAdmin();
+      allow create: if isValidId(statId)
+        && isEmailVerified()
+        && isValidAdminWallet(incoming())
+        && (
+          isAdmin()
+          || (statId == 'wallet' && incoming().totalWithdrawnByAdmin == 0 && incoming().commissionBalance == incoming().totalCommissionsEarned)
+        );
+      allow update: if isValidId(statId)
+        && isEmailVerified()
+        && isValidAdminWallet(incoming())
+        && (
+          isAdmin()
+          || (
+            statId == 'wallet'
+            && isNotBanned(request.auth.uid)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['commissionBalance', 'totalCommissionsEarned', 'updatedAt'])
+            && incoming().commissionBalance > existing().commissionBalance
+            && incoming().totalCommissionsEarned > existing().totalCommissionsEarned
+            && (incoming().commissionBalance - existing().commissionBalance) <= 10000000
+          )
+        );
+    }
+
+    // Global Platform Settings
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isSignedIn();
+      allow create, update: if isValidId(settingId) && isAdmin() && isValidLoanConfig(incoming());
+    }
+  }
+}
