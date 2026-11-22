@@ -1,34 +1,70 @@
 import React from 'react';
 import {
+  AlertTriangle,
   ArrowDownLeft,
   ArrowUpRight,
   Award,
   Globe,
   Landmark,
+  Loader2,
   MessageSquare,
+  RefreshCw,
   Send,
   ShoppingBag,
   Star,
 } from 'lucide-react';
-import { formatDateFr, formatFCFA } from '../lib/formatters';
-import type { AppView, LoanConfig, OperationModalType, TransactionRecord, UserProfile } from '../types';
+import {
+  formatDateFr,
+  formatFCFA,
+  formatFullDateFr,
+  SUBSCRIPTION_ALERT_WINDOW_DAYS,
+  toMillisSafe,
+} from '../lib/formatters';
+import type {
+  AppView,
+  CardRevealPayload,
+  LoanConfig,
+  OperationModalType,
+  SubscriptionRecord,
+  TransactionRecord,
+  UserProfile,
+  VirtualCardRecord,
+} from '../types';
 import { PWAInstallReminder } from './PWAComponents';
 import { VirtualCard } from './VirtualCard';
 
 interface DashboardHomeProps {
   user: UserProfile;
+  card: VirtualCardRecord | null;
+  subscription: SubscriptionRecord | null;
   transactions: TransactionRecord[];
   loanConfig: LoanConfig;
   onOpenOperation: (op: OperationModalType) => void;
   onNavigate: (view: AppView) => void;
+  onRevealCard: () => Promise<CardRevealPayload>;
+  onRenewCard: () => Promise<void>;
+  cardRenewing?: boolean;
+  cardRenewFeedback?: { type: 'ok' | 'err'; text: string } | null;
+  onRenewSubscription: () => Promise<void>;
+  subRenewing?: boolean;
+  subRenewFeedback?: { type: 'ok' | 'err'; text: string } | null;
 }
 
 export const DashboardHome: React.FC<DashboardHomeProps> = ({
   user,
+  card,
+  subscription,
   transactions,
   loanConfig,
   onOpenOperation,
   onNavigate,
+  onRevealCard,
+  onRenewCard,
+  cardRenewing = false,
+  cardRenewFeedback = null,
+  onRenewSubscription,
+  subRenewing = false,
+  subRenewFeedback = null,
 }) => {
   const quickActions: {
     label: string;
@@ -86,12 +122,80 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
     },
   ];
 
+  const subExpiryMs = toMillisSafe(subscription?.expiresAt);
+  const nowMs = Date.now();
+  const alertWindowMs = SUBSCRIPTION_ALERT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const isSubAlertVisible = Boolean(
+    subscription && subExpiryMs > 0 && subExpiryMs - nowMs <= alertWindowMs
+  );
+  const isSubExpired = Boolean(subExpiryMs > 0 && subExpiryMs <= nowMs);
+  const subDaysLeft = subExpiryMs > nowMs ? Math.ceil((subExpiryMs - nowMs) / (24 * 60 * 60 * 1000)) : 0;
+
   return (
     <div className="space-y-8">
+      {/* Subscription Expiry Alert Banner */}
+      {isSubAlertVisible && subscription && (
+        <div
+          className={`rounded-2xl border p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 ${
+            isSubExpired
+              ? 'border-red-500/45 bg-red-500/10'
+              : 'border-amber-500/45 bg-amber-500/10'
+          }`}
+        >
+          <div className="flex items-start gap-3 min-w-0">
+            <AlertTriangle
+              className={`w-5 h-5 shrink-0 mt-0.5 ${
+                isSubExpired ? 'text-red-400' : 'text-amber-400'
+              }`}
+            />
+            <div className="space-y-0.5">
+              <p className="text-sm font-semibold text-white">
+                {isSubExpired
+                  ? `Abonnement ${subscription.plan} expiré`
+                  : `Votre abonnement ${subscription.plan} expire dans ${subDaysLeft} jour(s)`}
+              </p>
+              <p className="text-xs text-slate-300">
+                Échéance : {formatFullDateFr(subExpiryMs)} · Renouvelez votre abonnement pour éviter toute interruption de service.
+              </p>
+              {subRenewFeedback && (
+                <p
+                  className={`text-xs font-medium pt-1 ${
+                    subRenewFeedback.type === 'ok' ? 'text-emerald-300' : 'text-red-300'
+                  }`}
+                >
+                  {subRenewFeedback.text}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={subRenewing}
+            onClick={onRenewSubscription}
+            className="min-h-[42px] inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-semibold text-xs px-4 py-2.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            {subRenewing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            <span>{subRenewing ? 'Renouvellement...' : "Renouveler l'abonnement"}</span>
+          </button>
+        </div>
+      )}
+
       {/* Top Hero Split: Virtual Card + Quick Actions */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
         <div className="xl:col-span-5 rounded-3xl border border-[#1E3A63] bg-[#0F1D36]/75 p-6">
-          <VirtualCard user={user} />
+          <VirtualCard
+            user={user}
+            card={card}
+            onRevealCard={onRevealCard}
+            onRenewCard={onRenewCard}
+            renewing={cardRenewing}
+            renewFeedback={cardRenewFeedback}
+          />
         </div>
 
         <div className="xl:col-span-7 space-y-6">
@@ -239,7 +343,7 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
                       <p className="text-xs text-slate-400 truncate">
                         {tx.operator} · {formatDateFr(tx.createdAt)}
                         {tx.feeAmount > 0 && !(tx.type === 'transfer_internal' && tx.recipientId === user.uid)
-                          ? ` · Frais 2% : ${formatFCFA(tx.feeAmount)}`
+                          ? ` · Frais : ${formatFCFA(tx.feeAmount)}`
                           : ''}
                       </p>
                     </div>

@@ -44,8 +44,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-[#1E3A63]/60">
             <div className="space-y-1 pt-3">
               <CreditCard className="w-5 h-5 text-blue-400" />
-              <p className="text-sm font-semibold text-white">Carte 16 chiffres</p>
-              <p className="text-xs text-slate-400">Émise immédiatement après inscription</p>
+              <p className="text-sm font-semibold text-white">Carte VISA XAF</p>
+              <p className="text-xs text-slate-400">Activée via émetteur partenaire sécurisé</p>
             </div>
             <div className="space-y-1 pt-3">
               <Smartphone className="w-5 h-5 text-amber-400" />
@@ -128,7 +128,7 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({
   const parts = defaultDisplayName.trim().split(' ');
   const [firstName, setFirstName] = useState(parts[0] || '');
   const [lastName, setLastName] = useState(parts.slice(1).join(' ') || '');
-  const [age, setAge] = useState('24');
+  const [age, setAge] = useState('');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -209,8 +209,9 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({
             <input
               type="number"
               required
-              min={1}
+              min={18}
               max={120}
+              placeholder="Ex: 24"
               value={age}
               onChange={(e) => setAge(e.target.value)}
               className="w-full min-h-[44px] rounded-xl border border-[#1E3A63] bg-[#050B18]/80 px-3.5 py-2.5 text-sm text-white font-mono-tabular focus:border-blue-400 focus:outline-none"
@@ -243,7 +244,7 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({
             disabled={loading}
             className="w-full min-h-[48px] rounded-xl bg-blue-500 hover:bg-blue-400 disabled:opacity-60 text-white font-semibold text-sm transition-colors px-4 py-3 cursor-pointer"
           >
-            {loading ? 'Génération de la carte...' : 'Activer mon compte & ma carte'}
+            {loading ? 'Création du compte...' : 'Activer mon compte AFRICABANK'}
           </button>
 
           <button

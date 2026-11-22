@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   Smartphone,
+  Trash2,
   Unlock,
   Users,
   Wallet,
@@ -49,6 +50,7 @@ interface AdminDashboardProps {
   onProcessLoan: (params: { loan: LoanRequest; decision: 'approved' | 'rejected'; adminNote: string }) => Promise<void>;
   onUpdateLoanConfig: (config: { minTransactionsCount: number; minCumulativeVolume: number; maxLoanAmount: number }) => Promise<void>;
   onSendBroadcast: (params: { title: string; message: string }) => Promise<void>;
+  onPurgeTestData: () => Promise<{ message: string }>;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
@@ -67,10 +69,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onProcessLoan,
   onUpdateLoanConfig,
   onSendBroadcast,
+  onPurgeTestData,
 }) => {
   const [adminTab, setAdminTab] = useState<'overview' | 'users' | 'loans' | 'broadcast'>('overview');
   const [txFilter, setTxFilter] = useState<string>('all');
   const [txSearch, setTxSearch] = useState('');
+  const [showPurgeModal, setShowPurgeModal] = useState(false);
+  const [purging, setPurging] = useState(false);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
 
   // Commission withdrawal modal via SingPay POST /transfert
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -305,18 +311,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             Supervision &amp; Commissions (2%)
           </h1>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setWithdrawAmount(String(Math.floor(wallet.commissionBalance)));
-            setShowWithdrawModal(true);
-          }}
-          disabled={wallet.commissionBalance <= 0}
-          className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-semibold text-sm px-4 py-2.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-        >
-          <Wallet className="w-4 h-4" />
-          <span>Retirer mes commissions</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              setPurgeError(null);
+              setShowPurgeModal(true);
+            }}
+            className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 text-red-200 font-semibold text-xs sm:text-sm px-4 py-2.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Purger données de test</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setWithdrawAmount(String(Math.floor(wallet.commissionBalance)));
+              setShowWithdrawModal(true);
+            }}
+            disabled={wallet.commissionBalance <= 0}
+            className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-semibold text-sm px-4 py-2.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Wallet className="w-4 h-4" />
+            <span>Retirer mes commissions</span>
+          </button>
+        </div>
       </div>
 
       {toast && (
@@ -400,6 +419,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <option value="transfer_internal">Transferts Carte à Carte</option>
               <option value="transfer_international">Transferts Internationaux</option>
               <option value="online_purchase">Achats en ligne</option>
+              <option value="card_renewal">Renouvellements Carte (500 FCFA)</option>
+              <option value="subscription_renewal">Renouvellements Abonnement</option>
               <option value="loan_disbursement">Décaissements Prêts</option>
               <option value="admin_withdrawal">Retraits Admin</option>
             </select>
@@ -530,7 +551,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <h3 className="font-display text-lg font-bold text-white">{selectedUser.fullName}</h3>
                   <p className="text-xs text-slate-400">{selectedUser.email} · {selectedUser.age} ans</p>
                   <p className="text-xs font-mono-tabular text-slate-300 pt-1">
-                    Carte : {selectedUser.cardNumber}
+                    Carte :{' '}
+                    {selectedUser.cardNumber
+                      ? `•••• ${selectedUser.cardNumber.slice(-4)}`
+                      : 'Gérée via Card Issuing'}
                   </p>
                 </div>
 
@@ -993,6 +1017,69 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               Envoyer sous « Administration »
             </button>
           </form>
+        </div>
+      )}
+
+      {/* MODAL: ADMIN PURGE TEST DATA */}
+      {showPurgeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-red-500/40 bg-[#0F1D36] p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-5 h-5 text-red-400" />
+                <h3 className="font-display text-lg font-bold text-white">
+                  Purger les données de test
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPurgeModal(false)}
+                className="min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Cette action serveur supprime les transactions marquées <strong>pending</strong> ou{' '}
+              <strong>isTest</strong>, nettoie les notifications expirées et réinitialise les soldes de test et le portefeuille des commissions à <strong>0 FCFA</strong>, sans supprimer les comptes administrateurs.
+            </p>
+            {purgeError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-xl p-3">
+                {purgeError}
+              </p>
+            )}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                disabled={purging}
+                onClick={() => setShowPurgeModal(false)}
+                className="flex-1 min-h-[44px] rounded-xl border border-[#1E3A63] text-slate-300 text-sm cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={purging}
+                onClick={async () => {
+                  setPurgeError(null);
+                  setPurging(true);
+                  try {
+                    const res = await onPurgeTestData();
+                    setShowPurgeModal(false);
+                    showToast(res.message);
+                  } catch (err) {
+                    setPurgeError(err instanceof Error ? err.message : 'Erreur lors de la purge.');
+                  } finally {
+                    setPurging(false);
+                  }
+                }}
+                className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white font-semibold text-sm cursor-pointer"
+              >
+                {purging && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>{purging ? 'Purge en cours...' : 'Confirmer la purge'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

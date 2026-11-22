@@ -34,19 +34,28 @@ import { NotificationsView } from './components/NotificationsView';
 import { OperationsModal } from './components/OperationsModal';
 import { OfflineBlockingScreen, PWAInstallButton } from './components/PWAComponents';
 import { auth, db, googleProvider, handleFirestoreError, OperationType, testConnection } from './lib/firebase';
-import { ADMIN_BOOTSTRAP_EMAIL, formatCardNumber } from './lib/formatters';
+import {
+  ADMIN_BOOTSTRAP_EMAIL,
+  formatCardMask,
+  isNotificationActive,
+  toMillisSafe,
+} from './lib/formatters';
 import {
   adminProcessLoan,
+  adminPurgeTestData,
   adminSendBroadcast,
   adminToggleUserBan,
   adminUpdateLoanConfig,
   cancelMobileMoneyGateway,
+  cleanupExpiredNotifications,
   completeUserOnboarding,
   createPendingAdminWithdrawalTransaction,
   createPendingMobileMoneyTransaction,
   DEFAULT_LOAN_CONFIG,
   deletePublicComment,
   ensurePrimaryAdminProfile,
+  ensureSubscriptionExpiryAlert,
+  ensureUserCardAndSubscriptionInitialized,
   executeInternalTransfer,
   executeInternationalTransfer,
   executeOnlinePurchase,
@@ -60,6 +69,9 @@ import {
   markNotificationRead,
   pollMobileMoneyStatus,
   postPublicComment,
+  renewSubscriptionServer,
+  renewVirtualCardServer,
+  revealVirtualCard,
   sendPrivateMessage,
   submitLoanRequest,
 } from './services/financeService';
@@ -76,22 +88,14 @@ import type {
   MobileOperator,
   NotificationItem,
   OperationModalType,
+  SubscriptionRecord,
   TransactionRecord,
   UserProfile,
+  VirtualCardRecord,
 } from './types';
 
 function toMillis(val: unknown): number {
-  if (!val) return 0;
-  if (val instanceof Date) return val.getTime();
-  if (
-    typeof val === 'object' &&
-    val !== null &&
-    'toMillis' in val &&
-    typeof (val as { toMillis: () => number }).toMillis === 'function'
-  ) {
-    return (val as { toMillis: () => number }).toMillis();
-  }
-  return 0;
+  return toMillisSafe(val);
 }
 
 function MainApp() {
@@ -102,6 +106,8 @@ function MainApp() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [liveProfile, setLiveProfile] = useState<UserProfile | null>(null);
+  const [liveCard, setLiveCard] = useState<VirtualCardRecord | null>(null);
+  const [liveSubscription, setLiveSubscription] = useState<SubscriptionRecord | null>(null);
 
   // Live Firestore collections
   const [liveSentTx, setLiveSentTx] = useState<TransactionRecord[]>([]);
@@ -131,6 +137,11 @@ function MainApp() {
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
   const [liveViewMode, setLiveViewMode] = useState<'user' | 'admin'>('user');
   const [fatalError, setFatalError] = useState<Error | null>(null);
+  const [notifNowTick, setNotifNowTick] = useState(() => Date.now());
+  const [cardRenewing, setCardRenewing] = useState(false);
+  const [cardRenewFeedback, setCardRenewFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [subRenewing, setSubRenewing] = useState(false);
+  const [subRenewFeedback, setSubRenewFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   const reportListenerError = (err: unknown, op: OperationType, path: string) => {
     if (!auth.currentUser) return;
@@ -202,6 +213,35 @@ function MainApp() {
     if (!authReady || !firebaseUser || !liveProfile || liveProfile.isBanned) return;
     const uid = firebaseUser.uid;
 
+    ensureUserCardAndSubscriptionInitialized(uid);
+    cleanupExpiredNotifications(uid);
+
+    const unsubCard = onSnapshot(
+      doc(db, 'cards', uid),
+      (snap) => {
+        if (snap.exists()) {
+          setLiveCard(snap.data() as VirtualCardRecord);
+        } else {
+          setLiveCard(null);
+        }
+      },
+      (err) => reportListenerError(err, OperationType.GET, `cards/${uid}`)
+    );
+
+    const unsubSub = onSnapshot(
+      doc(db, 'subscriptions', uid),
+      (snap) => {
+        if (snap.exists()) {
+          const subData = snap.data() as SubscriptionRecord;
+          setLiveSubscription(subData);
+          ensureSubscriptionExpiryAlert(subData);
+        } else {
+          setLiveSubscription(null);
+        }
+      },
+      (err) => reportListenerError(err, OperationType.GET, `subscriptions/${uid}`)
+    );
+
     const unsubSent = onSnapshot(
       query(collection(db, 'transactions'), where('userId', '==', uid)),
       (snap) => setLiveSentTx(snap.docs.map((d) => d.data() as TransactionRecord)),
@@ -227,7 +267,10 @@ function MainApp() {
     const unsubNotifs = onSnapshot(
       query(collection(db, 'notifications'), where('userId', '==', uid)),
       (snap) => {
-        const list = snap.docs.map((d) => d.data() as NotificationItem);
+        const nowMs = Date.now();
+        const list = snap.docs
+          .map((d) => d.data() as NotificationItem)
+          .filter((n) => isNotificationActive(n, nowMs));
         list.sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
         setLiveNotifications(list);
       },
@@ -268,7 +311,14 @@ function MainApp() {
       (err) => reportListenerError(err, OperationType.GET, 'settings/loan_config')
     );
 
+    const tickId = window.setInterval(() => {
+      setNotifNowTick(Date.now());
+    }, 30_000);
+
     return () => {
+      window.clearInterval(tickId);
+      unsubCard();
+      unsubSub();
       unsubSent();
       unsubRecv();
       unsubLoans();
@@ -348,7 +398,11 @@ function MainApp() {
 
   const currentUser = liveProfile;
   const isAdminActor = currentUser?.role === 'admin';
-  const unreadCount = liveNotifications.filter((n) => !n.read).length;
+  const activeNotifications = useMemo(
+    () => liveNotifications.filter((n) => isNotificationActive(n, notifNowTick)),
+    [liveNotifications, notifNowTick]
+  );
+  const unreadCount = activeNotifications.filter((n) => !n.read).length;
 
   // Handlers
   const handleGoogleLogin = async () => {
@@ -460,7 +514,12 @@ function MainApp() {
 
   const handleOnlinePurchase = async (p: { merchantName: string; amount: number }) => {
     if (!currentUser) throw new Error('Utilisateur non connecté.');
-    return executeOnlinePurchase({ user: currentUser, ...p, loanConfig: liveLoanConfig });
+    return executeOnlinePurchase({
+      user: currentUser,
+      cardLast4: liveCard?.last4 || '',
+      ...p,
+      loanConfig: liveLoanConfig,
+    });
   };
 
   const handleInternationalTransfer = async (p: {
@@ -471,6 +530,52 @@ function MainApp() {
   }) => {
     if (!currentUser) throw new Error('Utilisateur non connecté.');
     return executeInternationalTransfer({ user: currentUser, ...p, loanConfig: liveLoanConfig });
+  };
+
+  const handleRevealCard = async () => {
+    const idToken = await getValidIdToken();
+    return revealVirtualCard(idToken);
+  };
+
+  const handleRenewCard = async () => {
+    setCardRenewFeedback(null);
+    setCardRenewing(true);
+    try {
+      const idToken = await getValidIdToken();
+      const res = await renewVirtualCardServer(idToken);
+      setLiveCard(res.card);
+      setCardRenewFeedback({ type: 'ok', text: res.message });
+    } catch (err) {
+      setCardRenewFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Erreur lors du renouvellement de la carte.',
+      });
+    } finally {
+      setCardRenewing(false);
+    }
+  };
+
+  const handleRenewSubscription = async () => {
+    setSubRenewFeedback(null);
+    setSubRenewing(true);
+    try {
+      const idToken = await getValidIdToken();
+      const res = await renewSubscriptionServer(idToken);
+      setLiveSubscription(res.subscription);
+      setSubRenewFeedback({ type: 'ok', text: res.message });
+    } catch (err) {
+      setSubRenewFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : "Erreur lors du renouvellement de l'abonnement.",
+      });
+    } finally {
+      setSubRenewing(false);
+    }
+  };
+
+  const handlePurgeTestData = async () => {
+    const idToken = await getValidIdToken();
+    return adminPurgeTestData(idToken);
   };
 
   const handleStartConversation = async (contact: MessagingDirectoryEntry) => {
@@ -657,7 +762,10 @@ function MainApp() {
                   AFRICA<span className="text-amber-400">BANK</span>
                 </span>
                 <p className="hidden sm:block text-[11px] text-slate-400 truncate">
-                  {currentUser.fullName} · {formatCardNumber(currentUser.cardNumber, false)}
+                  {currentUser.fullName} ·{' '}
+                  {liveCard?.status === 'active'
+                    ? formatCardMask(liveCard.last4)
+                    : "Carte en attente d'activation"}
                 </p>
               </div>
             </div>
@@ -851,16 +959,26 @@ function MainApp() {
                 userIds: liveAllUsers.map((u) => u.uid),
               });
             }}
+            onPurgeTestData={handlePurgeTestData}
           />
         ) : (
           <>
             {activeView === 'dashboard' && (
               <DashboardHome
                 user={currentUser}
+                card={liveCard}
+                subscription={liveSubscription}
                 transactions={userTransactions}
                 loanConfig={liveLoanConfig}
                 onOpenOperation={(op) => setOperationModal(op)}
                 onNavigate={(v) => setActiveView(v)}
+                onRevealCard={handleRevealCard}
+                onRenewCard={handleRenewCard}
+                cardRenewing={cardRenewing}
+                cardRenewFeedback={cardRenewFeedback}
+                onRenewSubscription={handleRenewSubscription}
+                subRenewing={subRenewing}
+                subRenewFeedback={subRenewFeedback}
               />
             )}
 
@@ -950,7 +1068,7 @@ function MainApp() {
 
             {activeView === 'notifications' && (
               <NotificationsView
-                notifications={liveNotifications}
+                notifications={activeNotifications}
                 onMarkRead={async (notifId) => {
                   await markNotificationRead(notifId);
                 }}
@@ -982,6 +1100,7 @@ function MainApp() {
       <OperationsModal
         mode={operationModal}
         user={currentUser}
+        card={liveCard}
         onClose={() => setOperationModal(null)}
         onLookupCard={handleLookupCard}
         onStartMobileMoney={handleStartMobileMoney}

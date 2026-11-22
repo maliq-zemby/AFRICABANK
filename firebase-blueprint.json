@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Profil utilisateur OgoouePay avec carte virtuelle, solde FCFA, statistiques de fidelite et statut de moderation.",
+      "description": "Profil utilisateur AFRICABANK (sans stockage de numero complet ni CVV de carte virtuelle).",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -15,9 +15,6 @@
         "role": { "type": "string", "enum": ["user", "admin"] },
         "isBanned": { "type": "boolean" },
         "banReason": { "type": "string", "maxLength": 500 },
-        "cardNumber": { "type": "string", "minLength": 16, "maxLength": 16, "pattern": "^4532[0-9]{12}$" },
-        "cardExpiry": { "type": "string", "minLength": 5, "maxLength": 5, "pattern": "^(0[1-9]|1[0-2])/[0-9]{2}$" },
-        "cardCvv": { "type": "string", "minLength": 3, "maxLength": 3, "pattern": "^[0-9]{3}$" },
         "balance": { "type": "number" },
         "totalDepositsCount": { "type": "integer" },
         "totalDepositsVolume": { "type": "number" },
@@ -39,9 +36,6 @@
         "role",
         "isBanned",
         "banReason",
-        "cardNumber",
-        "cardExpiry",
-        "cardCvv",
         "balance",
         "totalDepositsCount",
         "totalDepositsVolume",
@@ -53,13 +47,67 @@
         "updatedAt"
       ]
     },
-    "CardDirectoryEntry": {
-      "title": "CardDirectoryEntry",
-      "description": "Annuaire public limite des cartes virtuelles sans PII pour verification du beneficiaire lors des transferts carte a carte.",
+    "VirtualCardRecord": {
+      "title": "VirtualCardRecord",
+      "description": "Carte virtuelle geree via un fournisseur Card Issuing reel avec cycle de renouvellement de 5 mois.",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "cardNumber": { "type": "string", "minLength": 16, "maxLength": 16, "pattern": "^4532[0-9]{12}$" },
+        "cardId": { "type": "string", "maxLength": 128 },
+        "last4": { "type": "string", "maxLength": 4 },
+        "expiryMonth": { "type": "string", "maxLength": 2 },
+        "expiryYear": { "type": "string", "maxLength": 4 },
+        "status": { "type": "string", "enum": ["active", "frozen", "pending_issuance"] },
+        "brand": { "type": "string", "enum": ["VISA"] },
+        "currency": { "type": "string", "enum": ["XAF"] },
+        "provider": { "type": "string", "maxLength": 80 },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "renewableAt": { "type": "string", "format": "date-time" },
+        "cycleNumber": { "type": "integer" },
+        "renewalStatus": { "type": "string", "enum": ["active", "eligible_for_renewal", "renewed", "expired_cycle"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "cardId",
+        "last4",
+        "expiryMonth",
+        "expiryYear",
+        "status",
+        "brand",
+        "currency",
+        "provider",
+        "issuedAt",
+        "renewableAt",
+        "cycleNumber",
+        "renewalStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SubscriptionRecord": {
+      "title": "SubscriptionRecord",
+      "description": "Abonnement utilisateur AFRICABANK avec suivi de date d'expiration et alerte avant echeance.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "plan": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "status": { "type": "string", "enum": ["active", "expiring_soon", "expired"] },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "lastAlertForExpiryMs": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "plan", "status", "startedAt", "expiresAt", "lastAlertForExpiryMs", "updatedAt"]
+    },
+    "CardDirectoryEntry": {
+      "title": "CardDirectoryEntry",
+      "description": "Annuaire public limite des cartes virtuelles actives sans PII pour verification du beneficiaire lors des transferts carte a carte.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "cardNumber": { "type": "string", "minLength": 16, "maxLength": 16, "pattern": "^[0-9]{16}$" },
         "holderName": { "type": "string", "minLength": 1, "maxLength": 120 },
         "active": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -68,7 +116,7 @@
     },
     "MessagingDirectoryEntry": {
       "title": "MessagingDirectoryEntry",
-      "description": "Annuaire de messagerie sans PII sensible (nom et 4 derniers chiffres) pour demarrer des discussions 1-a-1.",
+      "description": "Annuaire de messagerie sans PII sensible pour demarrer des discussions 1-a-1.",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -81,7 +129,7 @@
     },
     "TransactionRecord": {
       "title": "TransactionRecord",
-      "description": "Enregistrement immuable d'une operation financiere avec calcul de la commission de 2%.",
+      "description": "Enregistrement d'une operation financiere avec calcul de la commission ou frais de renouvellement.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -98,7 +146,9 @@
             "transfer_international",
             "online_purchase",
             "loan_disbursement",
-            "admin_withdrawal"
+            "admin_withdrawal",
+            "card_renewal",
+            "subscription_renewal"
           ]
         },
         "operator": { "type": "string", "minLength": 1, "maxLength": 60 },
@@ -109,6 +159,7 @@
         "netAmount": { "type": "number" },
         "status": { "type": "string", "enum": ["completed", "pending", "failed"] },
         "description": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "isTest": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [
@@ -160,18 +211,19 @@
     },
     "NotificationItem": {
       "title": "NotificationItem",
-      "description": "Notification privee isolee par userId (confirmations, receptions, eligibilite pret, messages admin).",
+      "description": "Notification privee isolee par userId avec expiration automatique TTL a 24h (expiresAt).",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "title": { "type": "string", "minLength": 1, "maxLength": 120 },
         "message": { "type": "string", "minLength": 1, "maxLength": 500 },
-        "category": { "type": "string", "enum": ["transaction", "loan", "admin", "broadcast", "security"] },
+        "category": { "type": "string", "enum": ["transaction", "loan", "admin", "broadcast", "security", "subscription", "card"] },
         "read": { "type": "boolean" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "userId", "title", "message", "category", "read", "createdAt"]
+      "required": ["id", "userId", "title", "message", "category", "read", "createdAt", "expiresAt"]
     },
     "Conversation": {
       "title": "Conversation",
@@ -213,7 +265,7 @@
     },
     "CommentReview": {
       "title": "CommentReview",
-      "description": "Avis et commentaire public sur l'application OgoouePay, moderable par l'administrateur.",
+      "description": "Avis et commentaire public sur l'application AFRICABANK, moderable par l'administrateur.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -227,7 +279,7 @@
     },
     "AdminWallet": {
       "title": "AdminWallet",
-      "description": "Portefeuille administrateur accumulant les commissions de 2% en temps reel.",
+      "description": "Portefeuille administrateur accumulant les commissions de 2% et les frais de renouvellement carte (500 FCFA).",
       "type": "object",
       "properties": {
         "commissionBalance": { "type": "number" },
@@ -255,6 +307,14 @@
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Profils complets des utilisateurs (PII protegee par owner/admin)."
     },
+    "/cards/{userId}": {
+      "schema": { "$ref": "#/entities/VirtualCardRecord" },
+      "description": "Metadonnees de carte virtuelle emise par un partenaire Card Issuing reel (sans PAN complet ni CVV)."
+    },
+    "/subscriptions/{userId}": {
+      "schema": { "$ref": "#/entities/SubscriptionRecord" },
+      "description": "Abonnements utilisateurs et suivi d'expiration."
+    },
     "/card_directory/{cardNumber}": {
       "schema": { "$ref": "#/entities/CardDirectoryEntry" },
       "description": "Lookup par numero de carte a 16 chiffres sans exposition de PII."
@@ -265,7 +325,7 @@
     },
     "/transactions/{transactionId}": {
       "schema": { "$ref": "#/entities/TransactionRecord" },
-      "description": "Journal des transactions et commissions 2%."
+      "description": "Journal des transactions, commissions 2% et renouvellements carte."
     },
     "/loans/{loanId}": {
       "schema": { "$ref": "#/entities/LoanRequest" },
@@ -273,7 +333,7 @@
     },
     "/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/NotificationItem" },
-      "description": "Notifications privees par utilisateur."
+      "description": "Notifications privees par utilisateur (politique TTL 24h sur expiresAt)."
     },
     "/conversations/{conversationId}": {
       "schema": { "$ref": "#/entities/Conversation" },

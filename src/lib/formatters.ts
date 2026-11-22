@@ -6,19 +6,35 @@ export const ADMIN_DEFAULT_PROFILE = {
   fullName: 'ZEMBY Maliq',
   age: 26,
 };
+
 export const COMMISSION_RATE = 0.02;
+export const CARD_RENEWAL_FEE_FCFA = 500;
+export const CARD_RENEWAL_MONTHS = 5;
+export const NOTIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+export const SUBSCRIPTION_ALERT_WINDOW_DAYS = 7;
+export const SUBSCRIPTION_DEFAULT_DAYS = 30;
 
 export function formatFCFA(amount: number): string {
   const safe = Number.isFinite(amount) ? Math.round(amount) : 0;
   return `${new Intl.NumberFormat('fr-FR').format(safe)} FCFA`;
 }
 
-export function formatCardNumber(cardNumber: string, reveal = true): string {
-  const clean = cardNumber.replace(/\D/g, '').padEnd(16, '0').slice(0, 16);
-  if (!reveal) {
-    return `${clean.slice(0, 4)} •••• •••• ${clean.slice(12, 16)}`;
+export function formatCardMask(last4?: string): string {
+  const cleanLast4 = (last4 || '').replace(/\D/g, '').slice(-4);
+  if (cleanLast4.length === 4) {
+    return `•••• •••• •••• ${cleanLast4}`;
   }
-  return `${clean.slice(0, 4)} ${clean.slice(4, 8)} ${clean.slice(8, 12)} ${clean.slice(12, 16)}`;
+  return '•••• •••• •••• ••••';
+}
+
+export function formatCardNumber(cardNumber: string, reveal = true): string {
+  const clean = (cardNumber || '').replace(/\D/g, '');
+  if (clean.length < 4) return '•••• •••• •••• ••••';
+  if (!reveal) {
+    return `•••• •••• •••• ${clean.slice(-4)}`;
+  }
+  const padded = clean.slice(0, 16);
+  return padded.replace(/(\d{4})(?=\d)/g, '$1 ');
 }
 
 export function calculateCommission(amount: number): number {
@@ -26,24 +42,50 @@ export function calculateCommission(amount: number): number {
   return Math.round(amount * COMMISSION_RATE);
 }
 
-export function generateVirtualCard(): {
-  cardNumber: string;
-  cardExpiry: string;
-  cardCvv: string;
-} {
-  let digits = '4532';
-  for (let i = 0; i < 12; i++) {
-    digits += Math.floor(Math.random() * 10).toString();
+export function toMillisSafe(value: unknown): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
   }
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const year = String((now.getFullYear() + 4) % 100).padStart(2, '0');
-  const cvv = String(Math.floor(100 + Math.random() * 900));
-  return {
-    cardNumber: digits,
-    cardExpiry: `${month}/${year}`,
-    cardCvv: cvv,
-  };
+  if (typeof value === 'object' && value !== null) {
+    if ('toMillis' in value && typeof (value as { toMillis: () => number }).toMillis === 'function') {
+      return (value as { toMillis: () => number }).toMillis();
+    }
+    if ('seconds' in value && typeof (value as { seconds: number }).seconds === 'number') {
+      const sec = (value as { seconds: number; nanoseconds?: number }).seconds;
+      const ns = (value as { nanoseconds?: number }).nanoseconds || 0;
+      return sec * 1000 + Math.floor(ns / 1_000_000);
+    }
+  }
+  return 0;
+}
+
+export function computeRenewableAt(issuedAt: Date): Date {
+  const target = new Date(issuedAt.getTime());
+  const originalDay = target.getUTCDate();
+  target.setUTCMonth(target.getUTCMonth() + CARD_RENEWAL_MONTHS);
+  if (target.getUTCDate() < originalDay) {
+    target.setUTCDate(0);
+  }
+  return target;
+}
+
+export function isNotificationActive(
+  notif: { createdAt?: unknown; expiresAt?: unknown },
+  nowMs = Date.now()
+): boolean {
+  const expMs = toMillisSafe(notif.expiresAt);
+  if (expMs > 0) {
+    return expMs > nowMs;
+  }
+  const createdMs = toMillisSafe(notif.createdAt);
+  if (createdMs > 0) {
+    return createdMs + NOTIFICATION_TTL_MS > nowMs;
+  }
+  return true;
 }
 
 export function isValidGabonPhone(phone: string): boolean {
@@ -52,24 +94,25 @@ export function isValidGabonPhone(phone: string): boolean {
 }
 
 export function formatDateFr(value: unknown): string {
-  if (!value) return 'À l’instant';
-  let date: Date;
-  if (value instanceof Date) {
-    date = value;
-  } else if (typeof value === 'object' && value !== null && 'toDate' in value && typeof (value as { toDate: () => Date }).toDate === 'function') {
-    date = (value as { toDate: () => Date }).toDate();
-  } else if (typeof value === 'string' || typeof value === 'number') {
-    date = new Date(value);
-  } else {
-    return 'À l’instant';
-  }
-  if (Number.isNaN(date.getTime())) return 'À l’instant';
+  const ms = toMillisSafe(value);
+  if (!ms) return 'À l’instant';
+  const date = new Date(ms);
   return new Intl.DateTimeFormat('fr-FR', {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
   }).format(date);
+}
+
+export function formatFullDateFr(value: unknown): string {
+  const ms = toMillisSafe(value);
+  if (!ms) return '—';
+  return new Intl.DateTimeFormat('fr-FR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(ms));
 }
 
 export function generateDocId(prefix: string): string {

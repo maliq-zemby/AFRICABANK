@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { createServer as createViteServer } from 'vite';
+import { processAdminPurgeRequest } from './netlify/functions/admin-purge';
+import { processCardsRequest } from './netlify/functions/cards';
+import { processSubscriptionsRequest } from './netlify/functions/subscriptions';
 
 type GatewayStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'EXPIRED';
 type MobileMoneyOp = 'Airtel Money' | 'Moov Money';
@@ -742,6 +745,39 @@ async function startServer(): Promise<void> {
 
   app.post('/api/payments/singpay/webhook', handleSingPayWebhook);
   app.post('/api/payments/mobile-money/webhook', handleSingPayWebhook);
+
+  // Virtual Card Issuing, Reveal & 5-Month Renewal (Netlify Function parity)
+  app.all('/api/cards', async (req: AuthenticatedRequest, res: Response) => {
+    const result = await processCardsRequest({
+      method: req.method,
+      authHeader: req.headers.authorization,
+      signatureHeader:
+        (req.headers['x-card-issuer-signature'] as string | undefined) ||
+        (req.headers['x-webhook-signature'] as string | undefined),
+      rawBody: req.rawBody ? req.rawBody.toString('utf8') : undefined,
+      body: (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>,
+    });
+    res.status(result.statusCode).json(result.body);
+  });
+
+  // Subscription Status & Server Renewal (Netlify Function parity)
+  app.all('/api/subscriptions', async (req: AuthenticatedRequest, res: Response) => {
+    const result = await processSubscriptionsRequest({
+      method: req.method,
+      authHeader: req.headers.authorization,
+      body: (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>,
+    });
+    res.status(result.statusCode).json(result.body);
+  });
+
+  // Admin Secure Test-Data Purge (Netlify Function parity)
+  app.post('/api/admin/purge', async (req: AuthenticatedRequest, res: Response) => {
+    const result = await processAdminPurgeRequest({
+      authHeader: req.headers.authorization,
+      body: (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>,
+    });
+    res.status(result.statusCode).json(result.body);
+  });
 
   // JSON 404 fallback for unknown /api/* routes so they never hit SPA HTML fallback
   app.use('/api', (_req: Request, res: Response) => {

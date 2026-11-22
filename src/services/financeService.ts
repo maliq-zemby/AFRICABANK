@@ -1,11 +1,16 @@
 import {
+  collection,
+  deleteDoc,
   doc,
   getDoc,
+  getDocs,
   increment,
+  query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
-  deleteDoc,
+  where,
   writeBatch,
   type WriteBatch,
 } from 'firebase/firestore';
@@ -15,16 +20,25 @@ import {
   ADMIN_DEFAULT_PROFILE,
   ADMIN_SECONDARY_EMAIL,
   calculateCommission,
+  computeRenewableAt,
   formatFCFA,
+  formatFullDateFr,
   generateDocId,
-  generateVirtualCard,
+  isNotificationActive,
+  NOTIFICATION_TTL_MS,
+  SUBSCRIPTION_ALERT_WINDOW_DAYS,
+  SUBSCRIPTION_DEFAULT_DAYS,
+  toMillisSafe,
 } from '../lib/formatters';
 import type {
   CardDirectoryEntry,
+  CardRevealPayload,
   LoanConfig,
   LoanRequest,
   MobileOperator,
+  SubscriptionRecord,
   UserProfile,
+  VirtualCardRecord,
 } from '../types';
 
 export function isAdminEmail(email?: string | null): boolean {
@@ -39,6 +53,10 @@ export const DEFAULT_LOAN_CONFIG: LoanConfig = {
   maxLoanAmount: 1000000,
   updatedAt: new Date(),
 };
+
+function buildNotificationExpiresAt(nowMs = Date.now()): Timestamp {
+  return Timestamp.fromMillis(nowMs + NOTIFICATION_TTL_MS);
+}
 
 function isNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
@@ -99,12 +117,16 @@ export async function completeUserOnboarding(params: {
   const cleanLast = (isPrimaryAdmin ? ADMIN_DEFAULT_PROFILE.lastName : lastName.trim()).slice(0, 60);
   const fullName = (isPrimaryAdmin ? ADMIN_DEFAULT_PROFILE.fullName : `${cleanFirst} ${cleanLast}`).trim().slice(0, 120);
   const finalAge = isPrimaryAdmin ? ADMIN_DEFAULT_PROFILE.age : Math.floor(age);
-  const card = generateVirtualCard();
   const isBootstrapAdmin = isAdminEmail(email);
+
+  const nowDate = new Date();
+  const renewableAtDate = computeRenewableAt(nowDate);
+  const subExpiryDate = new Date(nowDate.getTime() + SUBSCRIPTION_DEFAULT_DAYS * 24 * 60 * 60 * 1000);
 
   const batch = writeBatch(db);
   const userRef = doc(db, 'users', uid);
-  const cardDirRef = doc(db, 'card_directory', card.cardNumber);
+  const cardRef = doc(db, 'cards', uid);
+  const subRef = doc(db, 'subscriptions', uid);
   const msgDirRef = doc(db, 'messaging_directory', uid);
   const welcomeNotifId = generateDocId('notif');
   const notifRef = doc(db, 'notifications', welcomeNotifId);
@@ -120,9 +142,6 @@ export async function completeUserOnboarding(params: {
     role: isBootstrapAdmin ? 'admin' : 'user',
     isBanned: false,
     banReason: '',
-    cardNumber: card.cardNumber,
-    cardExpiry: card.cardExpiry,
-    cardCvv: card.cardCvv,
     balance: 0,
     totalDepositsCount: 0,
     totalDepositsVolume: 0,
@@ -134,18 +153,39 @@ export async function completeUserOnboarding(params: {
     updatedAt: serverTimestamp(),
   });
 
-  batch.set(cardDirRef, {
+  // Card initialized cleanly as pending_issuance (no fake PAN or CVV generated client-side)
+  batch.set(cardRef, {
     uid,
-    cardNumber: card.cardNumber,
-    holderName: fullName,
-    active: true,
+    cardId: '',
+    last4: '',
+    expiryMonth: '',
+    expiryYear: '',
+    status: 'pending_issuance',
+    brand: 'VISA',
+    currency: 'XAF',
+    provider: "En attente d'activation émetteur",
+    issuedAt: Timestamp.fromDate(nowDate),
+    renewableAt: Timestamp.fromDate(renewableAtDate),
+    cycleNumber: 1,
+    renewalStatus: 'active',
     createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  batch.set(subRef, {
+    uid,
+    plan: 'AFRICABANK Standard',
+    status: 'active',
+    startedAt: Timestamp.fromDate(nowDate),
+    expiresAt: Timestamp.fromDate(subExpiryDate),
+    lastAlertForExpiryMs: 0,
+    updatedAt: serverTimestamp(),
   });
 
   batch.set(msgDirRef, {
     uid,
     displayName: fullName,
-    cardLast4: card.cardNumber.slice(-4),
+    cardLast4: '0000',
     role: isBootstrapAdmin ? 'admin' : 'user',
     updatedAt: serverTimestamp(),
   });
@@ -154,10 +194,12 @@ export async function completeUserOnboarding(params: {
     id: welcomeNotifId,
     userId: uid,
     title: 'Bienvenue sur AFRICABANK',
-    message: `Votre carte virtuelle ${card.cardNumber.slice(0, 4)} •••• ${card.cardNumber.slice(-4)} est active. Effectuez un dépôt via Airtel Money ou Moov Money pour commencer.`,
+    message:
+      "Votre compte AFRICABANK est créé. Votre carte virtuelle est en attente d'activation par l'émetteur réel et vos dépôts Airtel / Moov Money passent par validation sécurisée.",
     category: 'security',
     read: false,
     createdAt: serverTimestamp(),
+    expiresAt: buildNotificationExpiresAt(nowDate.getTime()),
   });
 
   try {
@@ -167,30 +209,49 @@ export async function completeUserOnboarding(params: {
   }
 
   if (isBootstrapAdmin) {
-    try {
-      const configRef = doc(db, 'settings', 'loan_config');
-      const configSnap = await getDoc(configRef);
-      if (!configSnap.exists()) {
-        await setDoc(configRef, {
-          minTransactionsCount: DEFAULT_LOAN_CONFIG.minTransactionsCount,
-          minCumulativeVolume: DEFAULT_LOAN_CONFIG.minCumulativeVolume,
-          maxLoanAmount: DEFAULT_LOAN_CONFIG.maxLoanAmount,
-          updatedAt: serverTimestamp(),
-        });
-      }
-      const walletRef = doc(db, 'admin_stats', 'wallet');
-      const walletSnap = await getDoc(walletRef);
-      if (!walletSnap.exists()) {
-        await setDoc(walletRef, {
-          commissionBalance: 0,
-          totalCommissionsEarned: 0,
-          totalWithdrawnByAdmin: 0,
-          updatedAt: serverTimestamp(),
-        });
-      }
-    } catch {
-      // Initialisation silencieuse si déjà créée
+    await ensureAdminBootstrapDocs();
+  }
+}
+
+export async function ensureUserCardAndSubscriptionInitialized(uid: string): Promise<void> {
+  const nowDate = new Date();
+  const cardRef = doc(db, 'cards', uid);
+  const subRef = doc(db, 'subscriptions', uid);
+
+  try {
+    const [cardSnap, subSnap] = await Promise.all([getDoc(cardRef), getDoc(subRef)]);
+    if (!cardSnap.exists()) {
+      await setDoc(cardRef, {
+        uid,
+        cardId: '',
+        last4: '',
+        expiryMonth: '',
+        expiryYear: '',
+        status: 'pending_issuance',
+        brand: 'VISA',
+        currency: 'XAF',
+        provider: "En attente d'activation émetteur",
+        issuedAt: Timestamp.fromDate(nowDate),
+        renewableAt: Timestamp.fromDate(computeRenewableAt(nowDate)),
+        cycleNumber: 1,
+        renewalStatus: 'active',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
     }
+    if (!subSnap.exists()) {
+      await setDoc(subRef, {
+        uid,
+        plan: 'AFRICABANK Standard',
+        status: 'active',
+        startedAt: Timestamp.fromDate(nowDate),
+        expiresAt: Timestamp.fromMillis(nowDate.getTime() + SUBSCRIPTION_DEFAULT_DAYS * 24 * 60 * 60 * 1000),
+        lastAlertForExpiryMs: 0,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch {
+    // Migration silencieuse si déjà en place
   }
 }
 
@@ -251,9 +312,214 @@ export async function ensurePrimaryAdminProfile(uid: string, email: string): Pro
   await ensureAdminBootstrapDocs();
 }
 
+export async function cleanupExpiredNotifications(uid: string): Promise<number> {
+  try {
+    const snap = await getDocs(query(collection(db, 'notifications'), where('userId', '==', uid)));
+    const nowMs = Date.now();
+    let deletedCount = 0;
+    for (const d of snap.docs) {
+      const data = d.data() as { createdAt?: unknown; expiresAt?: unknown };
+      if (!isNotificationActive(data, nowMs)) {
+        await deleteDoc(d.ref).catch(() => undefined);
+        deletedCount += 1;
+      }
+    }
+    return deletedCount;
+  } catch {
+    return 0;
+  }
+}
+
+export async function ensureSubscriptionExpiryAlert(sub: SubscriptionRecord): Promise<void> {
+  const expiresMs = toMillisSafe(sub.expiresAt);
+  if (!expiresMs) return;
+  const nowMs = Date.now();
+  const windowMs = SUBSCRIPTION_ALERT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const remainingMs = expiresMs - nowMs;
+
+  if (remainingMs > windowMs) {
+    return;
+  }
+
+  const nextStatus = remainingMs <= 0 ? 'expired' : 'expiring_soon';
+  const alreadyAlerted = Number(sub.lastAlertForExpiryMs || 0) === expiresMs;
+  if (alreadyAlerted && sub.status === nextStatus) {
+    return;
+  }
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'subscriptions', sub.uid), {
+    status: nextStatus,
+    lastAlertForExpiryMs: expiresMs,
+    updatedAt: serverTimestamp(),
+  });
+
+  if (!alreadyAlerted) {
+    const notifId = generateDocId('notif_sub');
+    const daysLeft = Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+    batch.set(doc(db, 'notifications', notifId), {
+      id: notifId,
+      userId: sub.uid,
+      title: remainingMs <= 0 ? 'Abonnement AFRICABANK expiré' : 'Abonnement bientôt expiré',
+      message:
+        remainingMs <= 0
+          ? `Votre abonnement ${sub.plan} a expiré le ${formatFullDateFr(expiresMs)}. Renouvelez-le pour conserver vos services.`
+          : `Votre abonnement ${sub.plan} expire dans ${daysLeft} jour(s) (${formatFullDateFr(expiresMs)}). Pensez à le renouveler.`,
+      category: 'subscription',
+      read: false,
+      createdAt: serverTimestamp(),
+      expiresAt: buildNotificationExpiresAt(nowMs),
+    });
+  }
+
+  try {
+    await batch.commit();
+  } catch {
+    // Ignore concurrent deduplication updates
+  }
+}
+
+export async function fetchOrIssueVirtualCard(idToken: string): Promise<{
+  card: VirtualCardRecord | null;
+  issuerConfigured: boolean;
+  message: string;
+}> {
+  const resp = await fetch('/api/cards', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ action: 'issue' }),
+  });
+  const data = (await resp.json().catch(() => ({}))) as {
+    card?: VirtualCardRecord;
+    issuerConfigured?: boolean;
+    message?: string;
+    error?: string;
+  };
+  if (!resp.ok) {
+    throw new Error(data.error || 'Impossible de contacter le service émetteur de cartes.');
+  }
+  return {
+    card: data.card || null,
+    issuerConfigured: Boolean(data.issuerConfigured),
+    message: data.message || '',
+  };
+}
+
+export async function revealVirtualCard(idToken: string): Promise<CardRevealPayload> {
+  const resp = await fetch('/api/cards', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ action: 'reveal' }),
+  });
+  const data = (await resp.json().catch(() => ({}))) as CardRevealPayload;
+  if (!resp.ok || !data.revealed) {
+    throw new Error(data.error || "Affichage sécurisé refusé par l'émetteur.");
+  }
+  return data;
+}
+
+export async function renewVirtualCardServer(idToken: string): Promise<{
+  card: VirtualCardRecord;
+  txId: string;
+  feeCharged: number;
+  message: string;
+}> {
+  const resp = await fetch('/api/cards', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ action: 'renew' }),
+  });
+  const data = (await resp.json().catch(() => ({}))) as {
+    card?: VirtualCardRecord;
+    txId?: string;
+    feeCharged?: number;
+    message?: string;
+    error?: string;
+  };
+  if (!resp.ok || !data.card) {
+    throw new Error(data.error || 'Échec du renouvellement de la carte.');
+  }
+  return {
+    card: data.card,
+    txId: data.txId || '',
+    feeCharged: Number(data.feeCharged || 500),
+    message: data.message || 'Carte renouvelée avec succès.',
+  };
+}
+
+export async function renewSubscriptionServer(idToken: string): Promise<{
+  subscription: SubscriptionRecord;
+  message: string;
+}> {
+  const resp = await fetch('/api/subscriptions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ action: 'renew' }),
+  });
+  const data = (await resp.json().catch(() => ({}))) as {
+    subscription?: SubscriptionRecord;
+    message?: string;
+    error?: string;
+  };
+  if (!resp.ok || !data.subscription) {
+    throw new Error(data.error || "Échec du renouvellement de l'abonnement.");
+  }
+  return {
+    subscription: data.subscription,
+    message: data.message || 'Abonnement renouvelé avec succès.',
+  };
+}
+
+export async function adminPurgeTestData(idToken: string): Promise<{
+  deletedTransactions: number;
+  resetUsers: number;
+  deletedExpiredNotifications: number;
+  walletReset: boolean;
+  message: string;
+}> {
+  const resp = await fetch('/api/admin/purge', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ resetBalances: true }),
+  });
+  const data = (await resp.json().catch(() => ({}))) as {
+    deletedTransactions?: number;
+    resetUsers?: number;
+    deletedExpiredNotifications?: number;
+    walletReset?: boolean;
+    message?: string;
+    error?: string;
+  };
+  if (!resp.ok) {
+    throw new Error(data.error || 'Échec de la purge administrateur.');
+  }
+  return {
+    deletedTransactions: Number(data.deletedTransactions || 0),
+    resetUsers: Number(data.resetUsers || 0),
+    deletedExpiredNotifications: Number(data.deletedExpiredNotifications || 0),
+    walletReset: Boolean(data.walletReset),
+    message: data.message || 'Purge effectuée avec succès.',
+  };
+}
+
 export async function lookupCardDirectory(cardNumber: string): Promise<CardDirectoryEntry | null> {
   const clean = cardNumber.replace(/\D/g, '');
-  if (!/^4532\d{12}$/.test(clean)) return null;
+  if (!/^\d{16}$/.test(clean)) return null;
   try {
     const snap = await getDoc(doc(db, 'card_directory', clean));
     if (!snap.exists()) return null;
@@ -488,6 +754,7 @@ export async function finalizeConfirmedMobileMoneyTransaction(params: {
   const becameEligible = !user.loanEligible && evaluateLoanEligibility(user, 1, amount, loanConfig);
   const nextEligible = user.loanEligible || becameEligible;
   const notifId = generateDocId('notif');
+  const expiresAt = buildNotificationExpiresAt();
 
   await commitBatchWithAdminCommission(fee, (batch) => {
     if (type === 'deposit') {
@@ -514,6 +781,7 @@ export async function finalizeConfirmedMobileMoneyTransaction(params: {
         category: 'transaction',
         read: false,
         createdAt: serverTimestamp(),
+        expiresAt,
       });
     } else {
       batch.update(doc(db, 'users', user.uid), {
@@ -538,6 +806,7 @@ export async function finalizeConfirmedMobileMoneyTransaction(params: {
         category: 'transaction',
         read: false,
         createdAt: serverTimestamp(),
+        expiresAt,
       });
     }
 
@@ -551,6 +820,7 @@ export async function finalizeConfirmedMobileMoneyTransaction(params: {
         category: 'loan',
         read: false,
         createdAt: serverTimestamp(),
+        expiresAt,
       });
     }
   });
@@ -596,6 +866,7 @@ export async function executeInternalTransfer(params: {
   const nextEligible = user.loanEligible || becameEligible;
   const txId = generateDocId('tx');
   const recipientNotifId = generateDocId('notif');
+  const expiresAt = buildNotificationExpiresAt();
 
   await commitBatchWithAdminCommission(fee, (batch) => {
     batch.update(doc(db, 'users', user.uid), {
@@ -637,6 +908,7 @@ export async function executeInternalTransfer(params: {
       category: 'transaction',
       read: false,
       createdAt: serverTimestamp(),
+      expiresAt,
     });
 
     if (becameEligible) {
@@ -645,10 +917,11 @@ export async function executeInternalTransfer(params: {
         id: loyaltyNotifId,
         userId: user.uid,
         title: 'Éligibilité aux prêts débloquée',
-        message: 'Félicitations, votre fidélité vous permet d\'effectuer des prêts !',
+        message: "Félicitations, votre fidélité vous permet d'effectuer des prêts !",
         category: 'loan',
         read: false,
         createdAt: serverTimestamp(),
+        expiresAt,
       });
     }
   });
@@ -658,11 +931,12 @@ export async function executeInternalTransfer(params: {
 
 export async function executeOnlinePurchase(params: {
   user: UserProfile;
+  cardLast4: string;
   merchantName: string;
   amount: number;
   loanConfig: LoanConfig;
 }): Promise<{ fee: number; totalDebited: number; becameEligible: boolean }> {
-  const { user, merchantName, amount, loanConfig } = params;
+  const { user, cardLast4, merchantName, amount, loanConfig } = params;
   const fee = calculateCommission(amount);
   const totalDebited = amount + fee;
   if (user.balance < totalDebited) {
@@ -673,6 +947,8 @@ export async function executeOnlinePurchase(params: {
   const nextEligible = user.loanEligible || becameEligible;
   const txId = generateDocId('tx');
   const notifId = generateDocId('notif');
+  const expiresAt = buildNotificationExpiresAt();
+  const maskedLast4 = cardLast4 ? `•••• ${cardLast4}` : 'Carte Virtuelle';
 
   await commitBatchWithAdminCommission(fee, (batch) => {
     batch.update(doc(db, 'users', user.uid), {
@@ -691,7 +967,7 @@ export async function executeOnlinePurchase(params: {
       recipientName: merchantName.slice(0, 120),
       type: 'online_purchase',
       operator: 'Carte Virtuelle',
-      phoneOrAccount: `**** ${user.cardNumber.slice(-4)}`,
+      phoneOrAccount: maskedLast4,
       country: 'E-Commerce',
       grossAmount: amount,
       feeAmount: fee,
@@ -709,6 +985,7 @@ export async function executeOnlinePurchase(params: {
       category: 'transaction',
       read: false,
       createdAt: serverTimestamp(),
+      expiresAt,
     });
 
     if (becameEligible) {
@@ -717,10 +994,11 @@ export async function executeOnlinePurchase(params: {
         id: loyaltyNotifId,
         userId: user.uid,
         title: 'Éligibilité aux prêts débloquée',
-        message: 'Félicitations, votre fidélité vous permet d\'effectuer des prêts !',
+        message: "Félicitations, votre fidélité vous permet d'effectuer des prêts !",
         category: 'loan',
         read: false,
         createdAt: serverTimestamp(),
+        expiresAt,
       });
     }
   });
@@ -747,6 +1025,7 @@ export async function executeInternationalTransfer(params: {
   const nextEligible = user.loanEligible || becameEligible;
   const txId = generateDocId('tx');
   const notifId = generateDocId('notif');
+  const expiresAt = buildNotificationExpiresAt();
 
   await commitBatchWithAdminCommission(fee, (batch) => {
     batch.update(doc(db, 'users', user.uid), {
@@ -783,6 +1062,7 @@ export async function executeInternationalTransfer(params: {
       category: 'transaction',
       read: false,
       createdAt: serverTimestamp(),
+      expiresAt,
     });
 
     if (becameEligible) {
@@ -791,10 +1071,11 @@ export async function executeInternationalTransfer(params: {
         id: loyaltyNotifId,
         userId: user.uid,
         title: 'Éligibilité aux prêts débloquée',
-        message: 'Félicitations, votre fidélité vous permet d\'effectuer des prêts !',
+        message: "Félicitations, votre fidélité vous permet d'effectuer des prêts !",
         category: 'loan',
         read: false,
         createdAt: serverTimestamp(),
+        expiresAt,
       });
     }
   });
@@ -837,6 +1118,7 @@ export async function submitLoanRequest(params: {
     category: 'loan',
     read: false,
     createdAt: serverTimestamp(),
+    expiresAt: buildNotificationExpiresAt(),
   });
 
   try {
@@ -898,6 +1180,7 @@ export async function adminProcessLoan(params: {
     category: 'loan',
     read: false,
     createdAt: serverTimestamp(),
+    expiresAt: buildNotificationExpiresAt(),
   });
 
   try {
@@ -1016,6 +1299,7 @@ export async function adminToggleUserBan(params: {
     category: 'security',
     read: false,
     createdAt: serverTimestamp(),
+    expiresAt: buildNotificationExpiresAt(),
   });
 
   try {
@@ -1049,6 +1333,7 @@ export async function adminSendBroadcast(params: {
 }): Promise<void> {
   const { title, message, userIds } = params;
   const batch = writeBatch(db);
+  const expiresAt = buildNotificationExpiresAt();
   for (const uid of userIds) {
     const notifId = generateDocId('notif');
     batch.set(doc(db, 'notifications', notifId), {
@@ -1059,6 +1344,7 @@ export async function adminSendBroadcast(params: {
       category: 'broadcast',
       read: false,
       createdAt: serverTimestamp(),
+      expiresAt,
     });
   }
   try {
@@ -1139,6 +1425,7 @@ export async function sendPrivateMessage(params: {
       category: isAdminSupport ? 'admin' : 'transaction',
       read: false,
       createdAt: serverTimestamp(),
+      expiresAt: buildNotificationExpiresAt(),
     });
 
     await batch.commit();

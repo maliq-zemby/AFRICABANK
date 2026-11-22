@@ -7,11 +7,17 @@ export type TransactionType =
   | 'transfer_international'
   | 'online_purchase'
   | 'loan_disbursement'
-  | 'admin_withdrawal';
+  | 'admin_withdrawal'
+  | 'card_renewal'
+  | 'subscription_renewal';
 
 export type TransactionStatus = 'completed' | 'pending' | 'failed';
 
 export type MobileOperator = 'Airtel Money' | 'Moov Money';
+
+export type VirtualCardStatus = 'active' | 'frozen' | 'pending_issuance';
+export type CardRenewalStatus = 'active' | 'eligible_for_renewal' | 'renewed' | 'expired_cycle';
+export type SubscriptionStatus = 'active' | 'expiring_soon' | 'expired';
 
 export interface UserProfile {
   uid: string;
@@ -24,9 +30,9 @@ export interface UserProfile {
   role: UserRole;
   isBanned: boolean;
   banReason: string;
-  cardNumber: string;
-  cardExpiry: string;
-  cardCvv: string;
+  cardNumber?: string;
+  cardExpiry?: string;
+  cardCvv?: string;
   balance: number;
   totalDepositsCount: number;
   totalDepositsVolume: number;
@@ -35,6 +41,45 @@ export interface UserProfile {
   totalVolume: number;
   loanEligible: boolean;
   createdAt: Date | unknown;
+  updatedAt: Date | unknown;
+}
+
+export interface VirtualCardRecord {
+  uid: string;
+  cardId: string;
+  last4: string;
+  expiryMonth: string;
+  expiryYear: string;
+  status: VirtualCardStatus;
+  brand: 'VISA';
+  currency: 'XAF';
+  provider: string;
+  issuedAt: Date | unknown;
+  renewableAt: Date | unknown;
+  cycleNumber: number;
+  renewalStatus: CardRenewalStatus;
+  issuerConfigured?: boolean;
+  createdAt?: Date | unknown;
+  updatedAt?: Date | unknown;
+}
+
+export interface CardRevealPayload {
+  revealed: boolean;
+  revealToken?: string;
+  pan?: string;
+  cvv?: string;
+  expiryMonth?: string;
+  expiryYear?: string;
+  error?: string;
+}
+
+export interface SubscriptionRecord {
+  uid: string;
+  plan: string;
+  status: SubscriptionStatus;
+  startedAt: Date | unknown;
+  expiresAt: Date | unknown;
+  lastAlertForExpiryMs: number;
   updatedAt: Date | unknown;
 }
 
@@ -67,6 +112,7 @@ export interface TransactionRecord {
   netAmount: number;
   status: TransactionStatus;
   description: string;
+  isTest?: boolean;
   createdAt: Date | unknown;
 }
 
@@ -88,9 +134,10 @@ export interface NotificationItem {
   userId: string;
   title: string;
   message: string;
-  category: 'transaction' | 'loan' | 'admin' | 'broadcast' | 'security';
+  category: 'transaction' | 'loan' | 'admin' | 'broadcast' | 'security' | 'subscription' | 'card';
   read: boolean;
   createdAt: Date | unknown;
+  expiresAt: Date | unknown;
 }
 
 export interface Conversation {

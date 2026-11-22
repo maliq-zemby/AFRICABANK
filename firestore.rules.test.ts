@@ -1,5 +1,5 @@
 /**
- * Security Rules Verification Suite (Dirty Dozen Adversarial Test Cases)
+ * Security Rules Verification Suite (Dirty Dozen+ Adversarial Test Cases)
  * Designed for @firebase/rules-unit-testing against firestore.rules.
  */
 export const DIRTY_DOZEN_TEST_CASES = [
@@ -40,7 +40,7 @@ export const DIRTY_DOZEN_TEST_CASES = [
     name: 'Admin Email Spoof (Unverified)',
     target: '/admin_stats/wallet',
     operation: 'get',
-    auth: { uid: 'spoof', email: 'maliqzemby@gmail.com', email_verified: false },
+    auth: { uid: 'spoof', email: 'maliqzemby8@gmail.com', email_verified: false },
     expected: 'PERMISSION_DENIED',
   },
   {
@@ -99,6 +99,24 @@ export const DIRTY_DOZEN_TEST_CASES = [
     target: '/transactions/' + 'X'.repeat(200),
     operation: 'create',
     payload: { id: 'X'.repeat(200), createdAt: '1999-01-01T00:00:00Z' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 'DD-13',
+    name: 'Client-Side Card Issuance Spoof',
+    target: '/cards/userA',
+    operation: 'create',
+    payload: { uid: 'userA', cardId: 'fake_1', last4: '1234', status: 'active' },
+    auth: { uid: 'userA', email_verified: true },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 'DD-14',
+    name: 'Client-Side Subscription Extension',
+    target: '/subscriptions/userA',
+    operation: 'update',
+    payload: { expiresAt: '2099-01-01T00:00:00Z' },
+    auth: { uid: 'userA', email_verified: true },
     expected: 'PERMISSION_DENIED',
   },
 ];

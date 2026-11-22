@@ -1,0 +1,38 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  included_files = ["firebase-applet-config.json"]
+
+[[redirects]]
+  from = "/api/cards/*"
+  to = "/.netlify/functions/cards"
+  status = 200
+
+[[redirects]]
+  from = "/api/cards"
+  to = "/.netlify/functions/cards"
+  status = 200
+
+[[redirects]]
+  from = "/api/subscriptions/*"
+  to = "/.netlify/functions/subscriptions"
+  status = 200
+
+[[redirects]]
+  from = "/api/subscriptions"
+  to = "/.netlify/functions/subscriptions"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/purge"
+  to = "/.netlify/functions/admin-purge"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

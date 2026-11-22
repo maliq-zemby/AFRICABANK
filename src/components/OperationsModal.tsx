@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import {
   calculateCommission,
-  formatCardNumber,
+  formatCardMask,
   formatFCFA,
   INTERNATIONAL_COUNTRIES,
   isValidGabonPhone,
@@ -32,6 +32,7 @@ import type {
   MobileOperator,
   OperationModalType,
   UserProfile,
+  VirtualCardRecord,
 } from '../types';
 
 interface PendingMobileMoneyState {
@@ -50,6 +51,7 @@ interface PendingMobileMoneyState {
 interface OperationsModalProps {
   mode: OperationModalType;
   user: UserProfile;
+  card: VirtualCardRecord | null;
   onClose: () => void;
   onLookupCard: (cardNumber: string) => Promise<CardDirectoryEntry | null>;
   onStartMobileMoney: (params: {
@@ -86,6 +88,7 @@ interface OperationsModalProps {
 export const OperationsModal: React.FC<OperationsModalProps> = ({
   mode,
   user,
+  card,
   onClose,
   onLookupCard,
   onStartMobileMoney,
@@ -99,12 +102,12 @@ export const OperationsModal: React.FC<OperationsModalProps> = ({
 }) => {
   const [operator, setOperator] = useState<MobileOperator>('Airtel Money');
   const [phone, setPhone] = useState('');
-  const [amountStr, setAmountStr] = useState('25000');
+  const [amountStr, setAmountStr] = useState('');
   const [targetCard, setTargetCard] = useState('');
   const [recipientInfo, setRecipientInfo] = useState<CardDirectoryEntry | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
 
-  const [merchantName, setMerchantName] = useState('Canal+ Gabon');
+  const [merchantName, setMerchantName] = useState('');
   const [cvvInput, setCvvInput] = useState('');
 
   const [country, setCountry] = useState(INTERNATIONAL_COUNTRIES[0].name);
@@ -365,11 +368,14 @@ export const OperationsModal: React.FC<OperationsModalProps> = ({
         }
         result = await onInternalTransfer({ recipient: recipientInfo, amount });
       } else if (mode === 'online_purchase') {
+        if (!card || card.status !== 'active') {
+          throw new Error("Carte en attente d'activation par l'émetteur : paiement par carte indisponible.");
+        }
         if (!merchantName.trim()) {
           throw new Error('Veuillez indiquer le nom du marchand.');
         }
-        if (cvvInput !== user.cardCvv) {
-          throw new Error('Code CVV à 3 chiffres incorrect.');
+        if (!/^\d{3}$/.test(cvvInput)) {
+          throw new Error('Veuillez saisir le code CVV à 3 chiffres de votre carte émise.');
         }
         result = await onOnlinePurchase({ merchantName: merchantName.trim(), amount });
       } else if (mode === 'transfer_international') {
@@ -654,13 +660,13 @@ export const OperationsModal: React.FC<OperationsModalProps> = ({
                 <label className="block text-xs font-medium text-slate-300">
                   Numéro de carte du bénéficiaire (16 chiffres)
                 </label>
-                <input
+                  <input
                   type="text"
                   required
                   maxLength={19}
                   value={targetCard}
                   onChange={(e) => setTargetCard(e.target.value.replace(/[^\d\s]/g, ''))}
-                  placeholder="4532 9901 5520 1184"
+                  placeholder="Numéro de carte à 16 chiffres"
                   className="w-full min-h-[44px] rounded-xl border border-[#1E3A63] bg-[#050B18]/80 px-3.5 py-2.5 text-sm text-white font-mono-tabular focus:border-blue-400 focus:outline-none"
                 />
                 {lookingUp && (
@@ -684,6 +690,11 @@ export const OperationsModal: React.FC<OperationsModalProps> = ({
             {/* Online Purchase */}
             {mode === 'online_purchase' && (
               <div className="space-y-4">
+                {(!card || card.status !== 'active') && (
+                  <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-amber-200">
+                    Carte en attente d&apos;activation par l&apos;émetteur : les paiements e-commerce seront activés dès réception de votre carte réelle.
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-medium text-slate-300">Marchand en ligne</label>
                   <input
@@ -700,7 +711,9 @@ export const OperationsModal: React.FC<OperationsModalProps> = ({
                   <div className="space-y-1.5">
                     <label className="block text-xs font-medium text-slate-300">Carte utilisée</label>
                     <div className="min-h-[44px] rounded-xl border border-[#1E3A63] bg-[#050B18]/50 px-3.5 py-2.5 text-xs text-slate-300 font-mono-tabular flex items-center">
-                      {formatCardNumber(user.cardNumber, false)}
+                      {card?.status === 'active'
+                        ? formatCardMask(card.last4)
+                        : 'En attente émetteur'}
                     </div>
                   </div>
                   <div className="space-y-1.5">

@@ -1,6 +1,15 @@
 import React from 'react';
-import { Bell, Check, Landmark, Megaphone, ShieldAlert, ArrowLeftRight } from 'lucide-react';
-import { formatDateFr } from '../lib/formatters';
+import {
+  ArrowLeftRight,
+  Bell,
+  CalendarClock,
+  Check,
+  CreditCard,
+  Landmark,
+  Megaphone,
+  ShieldAlert,
+} from 'lucide-react';
+import { formatDateFr, isNotificationActive, toMillisSafe } from '../lib/formatters';
 import type { NotificationItem } from '../types';
 
 interface NotificationsViewProps {
@@ -12,12 +21,19 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
   notifications,
   onMarkRead,
 }) => {
+  const nowMs = Date.now();
+  const activeNotifications = notifications.filter((n) => isNotificationActive(n, nowMs));
+
   const getIcon = (cat: NotificationItem['category']) => {
     switch (cat) {
       case 'loan':
         return <Landmark className="w-5 h-5 text-amber-400" />;
       case 'broadcast':
         return <Megaphone className="w-5 h-5 text-sky-400" />;
+      case 'card':
+        return <CreditCard className="w-5 h-5 text-blue-400" />;
+      case 'subscription':
+        return <CalendarClock className="w-5 h-5 text-amber-400" />;
       case 'security':
       case 'admin':
         return <ShieldAlert className="w-5 h-5 text-amber-400" />;
@@ -26,28 +42,38 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
     }
   };
 
+  const formatTtlRemaining = (notif: NotificationItem): string => {
+    const expMs = toMillisSafe(notif.expiresAt);
+    if (!expMs) return 'Expire sous 24h';
+    const diffMs = Math.max(0, expMs - nowMs);
+    const hours = Math.floor(diffMs / (60 * 60 * 1000));
+    const mins = Math.floor((diffMs % (60 * 60 * 1000)) / (60 * 1000));
+    if (hours > 0) return `Expire dans ${hours}h`;
+    return `Expire dans ${Math.max(1, mins)} min`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
         <div>
           <h1 className="font-display text-2xl font-bold text-white">Notifications privées</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Alertes strictement personnelles : transactions, prêts et messages administratifs.
+            Alertes strictement personnelles (expiration automatique après 24h).
           </p>
         </div>
         <span className="text-xs text-slate-400 font-mono-tabular">
-          {notifications.filter((n) => !n.read).length} non lue(s)
+          {activeNotifications.filter((n) => !n.read).length} non lue(s)
         </span>
       </div>
 
-      {notifications.length === 0 ? (
+      {activeNotifications.length === 0 ? (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-10 text-center space-y-2">
           <Bell className="w-8 h-8 text-slate-600 mx-auto" />
-          <p className="text-sm text-slate-400">Aucune notification pour le moment.</p>
+          <p className="text-sm text-slate-400">Aucune notification active pour le moment.</p>
         </div>
       ) : (
         <div className="divide-y divide-slate-800/80 rounded-2xl border border-slate-800 bg-slate-900/70 overflow-hidden">
-          {notifications.map((notif) => (
+          {activeNotifications.map((notif) => (
             <div
               key={notif.id}
               className={`p-5 flex items-start justify-between gap-4 transition-colors ${
@@ -66,7 +92,9 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                     )}
                   </div>
                   <p className="text-sm text-slate-300 leading-relaxed">{notif.message}</p>
-                  <p className="text-xs text-slate-500">{formatDateFr(notif.createdAt)}</p>
+                  <p className="text-xs text-slate-500">
+                    {formatDateFr(notif.createdAt)} · {formatTtlRemaining(notif)}
+                  </p>
                 </div>
               </div>
 
@@ -74,7 +102,7 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onMarkRead(notif.id)}
-                  className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-slate-700 hover:border-emerald-500/40 px-3 py-1.5 text-xs text-slate-300 hover:text-emerald-300 transition-colors whitespace-nowrap shrink-0"
+                  className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-slate-700 hover:border-emerald-500/40 px-3 py-1.5 text-xs text-slate-300 hover:text-emerald-300 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>Lu</span>
